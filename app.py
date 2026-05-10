@@ -26,6 +26,7 @@ from modules.compilador import mostrar_compilador
 from modules.historial import mostrar_historial
 from modules.calendario import mostrar_calendario
 from modules.thumbnail_gen import mostrar_thumbnail_gen
+from modules.clip_splitter import mostrar_clip_splitter
 
 # ─────────────────────────────────────────────
 # Configuración general de la página
@@ -100,6 +101,9 @@ with st.sidebar:
         st.session_state.modulo_activo = "Generador de SEO"
     if st.button("🚀 Subida a YouTube", key="btn_subida", use_container_width=True):
         st.session_state.modulo_activo = "Subida a YouTube"
+
+    if st.button("✂️ Cortador de Streams", key="btn_clips", use_container_width=True):
+        st.session_state.modulo_activo = "Cortador de Streams"
 
     st.markdown("### Herramientas extra")
     modulos = {
@@ -195,3 +199,6 @@ elif modulo == "Historial":
 
 elif modulo == "Calendario Viral":
     mostrar_calendario()
+
+elif modulo == "Cortador de Streams":
+    mostrar_clip_splitter()
