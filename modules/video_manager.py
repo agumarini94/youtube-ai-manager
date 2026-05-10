@@ -87,10 +87,12 @@ def obtener_videos_canal(youtube, max_resultados: int = 200) -> list[dict]:
                 "titulo": titulo,
                 "vistas": int(stats.get("viewCount", 0)),
                 "likes": int(stats.get("likeCount", 0)),
+                "comentarios": int(stats.get("commentCount", 0)),
                 "privacidad": status.get("privacyStatus", "public"),
                 "idioma": detectar_idioma(titulo),
                 "thumbnail": snippet.get("thumbnails", {}).get("default", {}).get("url", ""),
                 "url": f"https://www.youtube.com/watch?v={item['id']}",
+                "fecha": snippet.get("publishedAt", ""),
             })
 
         page_token = resp.get("nextPageToken")
@@ -155,8 +157,7 @@ def mostrar_video_manager():
 
     # ── Filtros ───────────────────────────────────────────────────────────────
     st.markdown("---")
-    col_f1, col_f2, col_f3 = st.columns(3)
-
+    col_f1, col_f2 = st.columns(2)
     with col_f1:
         filtro_idioma = st.selectbox(
             "Idioma",
@@ -167,14 +168,30 @@ def mostrar_video_manager():
             "Privacidad",
             ["Todos", "Públicos", "Privados", "No listados"],
         )
+
+    col_f3, col_f4 = st.columns(2)
     with col_f3:
-        orden = st.selectbox("Ordenar por", ["Menos vistas primero", "Más vistas primero"])
+        criterio = st.selectbox(
+            "Ordenar por",
+            [
+                "📅 Más nuevos primero",
+                "📅 Más antiguos primero",
+                "👁 Más vistas primero",
+                "👁 Menos vistas primero",
+                "👍 Más likes primero",
+                "💬 Más comentarios primero",
+                "🔤 Título A → Z",
+                "🔤 Título Z → A",
+            ],
+        )
+    with col_f4:
+        busqueda = st.text_input("🔍 Buscar en título", placeholder="ej: animales, fails...")
 
     if st.button("🔄 Recargar lista desde YouTube"):
         del st.session_state["vm_videos"]
         st.rerun()
 
-    # Aplicar filtros
+    # ── Aplicar filtros ───────────────────────────────────────────────────────
     filtrados = videos
 
     if filtro_idioma == "Solo inglés 🇬🇧":
@@ -189,11 +206,22 @@ def mostrar_video_manager():
     elif filtro_privacidad == "No listados":
         filtrados = [v for v in filtrados if v["privacidad"] == "unlisted"]
 
-    filtrados = sorted(
-        filtrados,
-        key=lambda v: v["vistas"],
-        reverse=(orden == "Más vistas primero"),
-    )
+    if busqueda.strip():
+        term = busqueda.strip().lower()
+        filtrados = [v for v in filtrados if term in v["titulo"].lower()]
+
+    orden_config = {
+        "📅 Más nuevos primero":       ("fecha",       True),
+        "📅 Más antiguos primero":     ("fecha",       False),
+        "👁 Más vistas primero":       ("vistas",      True),
+        "👁 Menos vistas primero":     ("vistas",      False),
+        "👍 Más likes primero":        ("likes",       True),
+        "💬 Más comentarios primero":  ("comentarios", True),
+        "🔤 Título A → Z":            ("titulo",      False),
+        "🔤 Título Z → A":            ("titulo",      True),
+    }
+    campo, descendente = orden_config[criterio]
+    filtrados = sorted(filtrados, key=lambda v: v[campo], reverse=descendente)
 
     # ── Info rápida ───────────────────────────────────────────────────────────
     en_ingles = sum(1 for v in videos if v["idioma"] == "en")
@@ -233,7 +261,8 @@ def mostrar_video_manager():
 
         with col_info:
             st.markdown(f"**[{v['titulo']}]({v['url']})**")
-            st.caption(f"{idioma_badge} · {privacidad_badge} · 👁 {v['vistas']:,} vistas · 👍 {v['likes']:,}")
+            fecha_fmt = v["fecha"][:10] if v["fecha"] else "—"
+            st.caption(f"{idioma_badge} · {privacidad_badge} · 📅 {fecha_fmt} · 👁 {v['vistas']:,} vistas · 👍 {v['likes']:,} · 💬 {v['comentarios']:,}")
 
         if checked:
             seleccionados.append(v)
