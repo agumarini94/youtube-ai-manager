@@ -42,3 +42,5 @@ tmp_*/
 .idea/
 *.swp
 *.code-workspace
+node_modules/
+frontend/dist/
