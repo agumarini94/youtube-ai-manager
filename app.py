@@ -27,6 +27,7 @@ from modules.historial import mostrar_historial
 from modules.calendario import mostrar_calendario
 from modules.thumbnail_gen import mostrar_thumbnail_gen
 from modules.clip_splitter import mostrar_clip_splitter
+from modules.video_manager import mostrar_video_manager
 
 # ─────────────────────────────────────────────
 # Configuración general de la página
@@ -104,6 +105,8 @@ with st.sidebar:
 
     if st.button("✂️ Cortador de Streams", key="btn_clips", use_container_width=True):
         st.session_state.modulo_activo = "Cortador de Streams"
+    if st.button("🎛️ Gestión de Videos", key="btn_manager", use_container_width=True):
+        st.session_state.modulo_activo = "Gestión de Videos"
 
     st.markdown("### Herramientas extra")
     modulos = {
@@ -202,3 +205,6 @@ elif modulo == "Calendario Viral":
 
 elif modulo == "Cortador de Streams":
     mostrar_clip_splitter()
+
+elif modulo == "Gestión de Videos":
+    mostrar_video_manager()
