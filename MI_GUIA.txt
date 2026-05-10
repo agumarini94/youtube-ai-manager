@@ -70,4 +70,3 @@ COMANDO PARA ARRANCAR LA APP
 ====================================================
 
 
-git hub code : F46C-120E
