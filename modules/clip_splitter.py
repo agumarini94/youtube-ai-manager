@@ -190,22 +190,41 @@ def mostrar_clip_splitter():
         if "escenas_detectadas" in st.session_state and st.session_state["escenas_detectadas"]:
             escenas = st.session_state["escenas_detectadas"]
 
-            st.markdown("**Seleccioná las escenas que querés exportar:**")
+            st.markdown("**Previsualizá cada escena y seleccioná las que querés exportar:**")
 
             seleccionadas = []
             for e in escenas:
-                checked = st.checkbox(
-                    f"Escena {e['numero']}  |  {e['inicio_fmt']} → {e['fin_fmt']}  |  {e['duracion']}s",
-                    key=f"escena_{e['numero']}",
-                    value=True,
-                )
+                col_check, col_info, col_btn = st.columns([0.5, 4, 1.5])
+
+                with col_check:
+                    checked = st.checkbox("", key=f"escena_{e['numero']}", value=False)
+
+                with col_info:
+                    st.markdown(f"**Escena {e['numero']}** — {e['inicio_fmt']} → {e['fin_fmt']} ({e['duracion']}s)")
+
+                with col_btn:
+                    if st.button("👁 Preview", key=f"prev_{e['numero']}"):
+                        with st.spinner("Cortando preview..."):
+                            clips_prev = cortar_clips(video_path, [e])
+                        if clips_prev:
+                            st.session_state[f"preview_{e['numero']}"] = str(clips_prev[0])
+
+                # Mostrar el reproductor si ya se generó el preview de esta escena
+                if f"preview_{e['numero']}" in st.session_state:
+                    st.video(st.session_state[f"preview_{e['numero']}"])
+
                 if checked:
                     seleccionadas.append(e)
 
-            if seleccionadas and st.button(f"✂️ Exportar {len(seleccionadas)} clip(s)", type="primary"):
-                with st.spinner("Cortando clips..."):
-                    clips = cortar_clips(video_path, seleccionadas)
-                _mostrar_clips(clips)
+            st.markdown("---")
+            total = len(seleccionadas)
+            if total:
+                if st.button(f"✂️ Exportar {total} clip(s) seleccionado(s)", type="primary"):
+                    with st.spinner(f"Exportando {total} clip(s)..."):
+                        clips = cortar_clips(video_path, seleccionadas)
+                    _mostrar_clips(clips)
+            else:
+                st.info("Previsualizá las escenas y marcá el checkbox de las que querés exportar.")
 
 
 def _mostrar_clips(clips: list[Path]):
