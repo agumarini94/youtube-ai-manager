@@ -1,0 +1,38 @@
+# Interfaz visual
+streamlit>=1.32.0
+
+# Claude / Anthropic IA
+anthropic>=0.25.0
+
+# YouTube Data API
+google-api-python-client>=2.120.0
+google-auth>=2.28.0
+google-auth-oauthlib>=1.2.0
+google-auth-httplib2>=0.2.0
+
+# Descarga y análisis de videos
+yt-dlp>=2024.3.10
+
+# ElevenLabs - texto a voz
+elevenlabs>=1.1.0
+
+# Variables de entorno
+python-dotenv>=1.0.1
+
+# HTTP requests
+requests>=2.31.0
+
+# Gráficos en Streamlit
+plotly>=5.20.0
+
+# Manejo de datos
+pandas>=2.2.0
+
+# Subtítulos automáticos con IA (módulo Editor de Video)
+# Nota: FFmpeg debe estar instalado en el sistema: brew install ffmpeg
+openai-whisper>=20231117
+
+# Bot de Telegram + scheduler automático
+python-telegram-bot>=20.0
+APScheduler>=3.10
+pytz>=2024.1

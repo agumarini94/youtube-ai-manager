@@ -1,0 +1,73 @@
+====================================================
+  YOUTUBE AI MANAGER — MI GUÍA PERSONAL
+====================================================
+
+COMANDO PARA ARRANCAR LA APP
+------------------------------
+
+  1. Abrir la terminal
+
+  2. Ir a la carpeta del proyecto:
+     cd /Users/agustin/Desktop/Projects/YoutubeHelp/youtube_ai_manager
+
+  3. Activar el entorno virtual:
+     source venv/bin/activate
+
+  4. Lanzar la app:
+     streamlit run app.py
+
+  5. Se abre automáticamente en el navegador en:
+     http://localhost:8501
+
+  Para cerrar la app: Ctrl + C en la terminal
+  Para desactivar el venv: deactivate
+
+
+====================================================
+  QUÉ HACE CADA MÓDULO
+====================================================
+
+  - Analizador de Canal
+    Ve estadísticas de tu canal de YouTube + análisis con IA.
+    Útil para entender qué videos funcionan mejor.
+
+  - Tendencias Virales
+    Busca temas que están en tendencia y los rankea con IA.
+    Usalo para decidir sobre qué grabar.
+
+  - Generador de Contenido
+    Le das un tema y Claude te genera: guión completo,
+    título, descripción y tags para el video.
+
+  - Generador de Voz
+    Convierte texto a voz en español usando ElevenLabs.
+    Podés usar el guión generado directamente acá.
+
+  - Subida a YouTube
+    Sube el video terminado a tu canal directamente desde la app.
+    Necesita el OAuth2 (ya configurado con client_secret.json).
+
+
+====================================================
+  SI ALGO NO FUNCIONA
+====================================================
+
+  - "No module found" → probablemente el venv no está activado.
+    Volvé al paso 3 arriba.
+
+  - Error de API key → revisá el archivo .env en la carpeta.
+    Las keys son: ANTHROPIC_API_KEY, YOUTUBE_API_KEY,
+    YOUTUBE_CHANNEL_ID, ELEVENLABS_API_KEY
+
+  - Error de autenticación YouTube → el archivo client_secret.json
+    tiene que estar en la raíz del proyecto. Si el token expiró,
+    borrá token_youtube.json y volvé a autenticar.
+
+  - Cuota de YouTube agotada → la API tiene 10,000 unidades/día.
+    Esperá hasta mañana.
+
+
+====================================================
+
+
+git hub code : F46C-120E

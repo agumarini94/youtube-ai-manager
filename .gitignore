@@ -1,0 +1,44 @@
+# ── Secretos y credenciales ────────────────────────────────────────────────────
+.env
+client_secret.json
+token_youtube.json
+*.json.bak
+
+# ── Datos personales / historial ───────────────────────────────────────────────
+data/
+
+# ── Entorno virtual ────────────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# ── Archivos temporales del workflow ──────────────────────────────────────────
+ytbot_*/
+thumb_*/
+tmp_*/
+*.mp4
+*.mp3
+*.wav
+*.jpg
+*.jpeg
+*.png
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+
+# ── IDEs ──────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.code-workspace
