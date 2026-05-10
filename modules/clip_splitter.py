@@ -215,6 +215,8 @@ def _mostrar_clips(clips: list[Path]):
 
     st.success(f"✅ Se generaron {len(clips)} clip(s)")
     for clip in clips:
+        st.markdown(f"**{clip.name}**")
+        st.video(str(clip))
         with open(clip, "rb") as f:
             st.download_button(
                 label=f"⬇️ Descargar {clip.name}",
@@ -223,3 +225,4 @@ def _mostrar_clips(clips: list[Path]):
                 mime="video/mp4",
                 key=f"dl_{clip.name}",
             )
+        st.markdown("---")
