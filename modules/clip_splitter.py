@@ -227,12 +227,25 @@ def mostrar_clip_splitter():
                 st.info("Previsualizá las escenas y marcá el checkbox de las que querés exportar.")
 
 
+def _obtener_duracion(ruta: str) -> float:
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", ruta],
+            capture_output=True, text=True, timeout=15,
+        )
+        return float(r.stdout.strip() or 0)
+    except Exception:
+        return 0.0
+
+
 def _mostrar_clips(clips: list[Path]):
     if not clips:
         st.error("No se generó ningún clip. Revisá los tiempos.")
         return
 
     st.success(f"✅ Se generaron {len(clips)} clip(s)")
+
     for clip in clips:
         st.markdown(f"**{clip.name}**")
         st.video(str(clip))
@@ -245,3 +258,37 @@ def _mostrar_clips(clips: list[Path]):
                 key=f"dl_{clip.name}",
             )
         st.markdown("---")
+
+    # ── Acciones rápidas ──────────────────────────────────────────────────────
+    st.markdown("### ¿Qué hacemos con estos clips?")
+    col_comp, col_yt = st.columns(2)
+
+    with col_comp:
+        if st.button("🎞️ Enviar al Compilador", use_container_width=True):
+            clips_para_compilador = [
+                {
+                    "ruta": str(clip),
+                    "nombre": clip.name,
+                    "titulo": clip.stem,
+                    "canal": "",
+                    "duracion": _obtener_duracion(str(clip)),
+                }
+                for clip in clips
+            ]
+            st.session_state["compilador_clips"] = clips_para_compilador
+            st.session_state["modulo_activo"] = "Compilador"
+            st.rerun()
+
+    with col_yt:
+        if len(clips) == 1:
+            if st.button("🚀 Subir a YouTube", use_container_width=True):
+                st.session_state["video_para_subir"] = str(clips[0])
+                st.session_state["modulo_activo"] = "Subida a YouTube"
+                st.rerun()
+        else:
+            st.button(
+                "🚀 Subir a YouTube",
+                use_container_width=True,
+                disabled=True,
+                help="Solo disponible cuando exportás un único clip. Para varios, usá el Compilador primero.",
+            )
