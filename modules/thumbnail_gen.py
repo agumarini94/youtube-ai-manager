@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import tempfile
+import textwrap
 from pathlib import Path
 
 import streamlit as st
@@ -233,7 +234,7 @@ def generar_texto_thumbnail(seo: dict) -> dict:
     try:
         client = _anthropic.Anthropic(api_key=api_key)
         resp = client.messages.create(
-            model="claude-3-haiku-20240307",
+            model="claude-haiku-4-5-20251001",
             max_tokens=150,
             messages=[{"role": "user", "content": (
                 f"Sos experto en CTR de YouTube. Generás el texto del thumbnail "
@@ -287,6 +288,85 @@ def generar_thumbnail_automatico(ruta_video: str, seo: dict, carpeta: str | None
         return None
 
 
+# ── Thumbnail desde imagen estática (para Shorts / IA content) ───────────────
+
+_THUMB_W = 1280
+_THUMB_H = 720
+
+_FUENTES_IMPACT = [
+    "/System/Library/Fonts/Supplemental/Impact.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Black.ttf",
+] + _FUENTES_SISTEMA
+
+
+def _fuente_impact(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    for p in _FUENTES_IMPACT:
+        if Path(p).exists():
+            try:
+                return ImageFont.truetype(p, size)
+            except Exception:
+                continue
+    return ImageFont.load_default()
+
+
+def generate_thumbnail(
+    titulo: str,
+    subtitulo: str = "",
+    imagen_fondo: str | None = None,
+) -> str:
+    """
+    Genera un thumbnail 1280×720 con texto bold blanco con sombra.
+    Si imagen_fondo es None usa fondo oscuro sólido.
+    Retorna la ruta al JPEG generado.
+    """
+    if imagen_fondo and Path(imagen_fondo).exists():
+        img = Image.open(imagen_fondo).convert("RGB")
+        ratio_w, ratio_h = _THUMB_W / img.width, _THUMB_H / img.height
+        escala = max(ratio_w, ratio_h)
+        img = img.resize((int(img.width * escala), int(img.height * escala)), Image.LANCZOS)
+        left = (img.width  - _THUMB_W) // 2
+        top  = (img.height - _THUMB_H) // 2
+        img  = img.crop((left, top, left + _THUMB_W, top + _THUMB_H))
+        # Oscurecer para que el texto sea legible
+        overlay = Image.new("RGBA", (_THUMB_W, _THUMB_H), (0, 0, 0, 145))
+        img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+    else:
+        img = Image.new("RGB", (_THUMB_W, _THUMB_H), (12, 12, 22))
+
+    draw = ImageDraw.Draw(img)
+
+    # ── Título principal ───────────────────────────────────────────────────────
+    font_big = _fuente_impact(100)
+    lineas   = textwrap.wrap(titulo.upper(), width=18)[:3]
+    texto    = "\n".join(lineas)
+
+    bbox     = draw.textbbox((0, 0), texto, font=font_big, spacing=10)
+    tw, th   = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    x = (_THUMB_W - tw) // 2
+    y = (_THUMB_H - th) // 2 - (55 if subtitulo else 0)
+
+    # Sombra
+    for dx, dy in [(3, 3), (5, 5), (-2, -2)]:
+        draw.text((x + dx, y + dy), texto, font=font_big,
+                  fill=(0, 0, 0, 210), spacing=10)
+    draw.text((x, y), texto, font=font_big, fill=(255, 255, 255), spacing=10)
+
+    # ── Subtítulo ──────────────────────────────────────────────────────────────
+    if subtitulo:
+        font_sub = _fuente_impact(54)
+        bbox_s   = draw.textbbox((0, 0), subtitulo, font=font_sub)
+        sw       = bbox_s[2] - bbox_s[0]
+        sx       = (_THUMB_W - sw) // 2
+        sy       = y + th + 24
+        for dx, dy in [(2, 2), (3, 3)]:
+            draw.text((sx + dx, sy + dy), subtitulo, font=font_sub, fill=(0, 0, 0, 190))
+        draw.text((sx, sy), subtitulo, font=font_sub, fill=(255, 220, 0))
+
+    path = tempfile.mktemp(suffix="_thumbnail.jpg")
+    img.convert("RGB").save(path, "JPEG", quality=95)
+    return path
+
+
 # ── UI Streamlit ───────────────────────────────────────────────────────────────
 
 def mostrar_thumbnail_gen():
@@ -316,7 +396,7 @@ El thumbnail es responsable del **~70 % del CTR** en YouTube.
     ruta_video: str | None = None
 
     if ruta_auto:
-        st.success(f"✅ Video disponible: `{Path(ruta_auto).name}`")
+        st.success(f"✅ Video disponible desde el Compilador — {Path(ruta_auto).name}")
         fuente = st.radio(
             "Video a usar",
             ["Usar el video compilado", "Subir otro video"],

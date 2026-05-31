@@ -12,6 +12,9 @@ import json
 import shutil
 from pathlib import Path
 
+FFMPEG  = "/opt/homebrew/bin/ffmpeg"
+FFPROBE = "/opt/homebrew/bin/ffprobe"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Utilidades base
@@ -19,7 +22,7 @@ from pathlib import Path
 
 def verificar_ffmpeg() -> bool:
     try:
-        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+        subprocess.run([FFMPEG, "-version"], capture_output=True, check=True)
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
@@ -28,7 +31,7 @@ def verificar_ffmpeg() -> bool:
 def obtener_info_video(ruta: str) -> dict:
     try:
         result = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-print_format", "json",
+            [FFPROBE, "-v", "quiet", "-print_format", "json",
              "-show_streams", "-show_format", ruta],
             capture_output=True, text=True, check=True
         )
@@ -89,7 +92,7 @@ def run_ffmpeg(cmd: list) -> tuple[bool, str]:
 
 def op_recortar(entrada: str, salida: str, inicio: float, fin: float) -> tuple[bool, str]:
     """Conserva solo el fragmento entre inicio y fin."""
-    cmd = ["ffmpeg", "-i", entrada, "-ss", str(inicio), "-to", str(fin),
+    cmd = [FFMPEG, "-i", entrada, "-ss", str(inicio), "-to", str(fin),
            "-c:v", "libx264", "-c:a", "aac", "-y", salida]
     return run_ffmpeg(cmd)
 
@@ -116,7 +119,7 @@ def op_eliminar_tramos(entrada: str, salida: str, tramos: list) -> tuple[bool, s
 
     if len(mantener) == 1:
         ini, fin = mantener[0]
-        cmd = ["ffmpeg", "-i", entrada, "-ss", str(ini), "-to", str(fin),
+        cmd = [FFMPEG, "-i", entrada, "-ss", str(ini), "-to", str(fin),
                "-c:v", "libx264", "-c:a", "aac", "-y", salida]
         return run_ffmpeg(cmd)
 
@@ -130,12 +133,12 @@ def op_eliminar_tramos(entrada: str, salida: str, tramos: list) -> tuple[bool, s
     if info["tiene_audio"]:
         cin = "".join(f"[v{i}][a{i}]" for i in range(n))
         fc = ";".join(fv + fa + [f"{cin}concat=n={n}:v=1:a=1[outv][outa]"])
-        cmd = ["ffmpeg", "-i", entrada, "-filter_complex", fc,
+        cmd = [FFMPEG, "-i", entrada, "-filter_complex", fc,
                "-map", "[outv]", "-map", "[outa]", "-y", salida]
     else:
         cin = "".join(f"[v{i}]" for i in range(n))
         fc = ";".join(fv + [f"{cin}concat=n={n}:v=1:a=0[outv]"])
-        cmd = ["ffmpeg", "-i", entrada, "-filter_complex", fc,
+        cmd = [FFMPEG, "-i", entrada, "-filter_complex", fc,
                "-map", "[outv]", "-y", salida]
     return run_ffmpeg(cmd)
 
@@ -165,7 +168,7 @@ def op_insertar_clip(entrada: str, salida: str, clip: str, en_segundo: float) ->
         for p in partes:
             f.write(f"file '{p}'\n")
 
-    cmd = ["ffmpeg", "-f", "concat", "-safe", "0", "-i", lista,
+    cmd = [FFMPEG, "-f", "concat", "-safe", "0", "-i", lista,
            "-c", "copy", "-y", salida]
     return run_ffmpeg(cmd)
 
@@ -182,24 +185,24 @@ def op_audio(
     sil_fin: float = None,
 ) -> tuple[bool, str]:
     if quitar:
-        return run_ffmpeg(["ffmpeg", "-i", entrada, "-an", "-c:v", "copy", "-y", salida])
+        return run_ffmpeg([FFMPEG, "-i", entrada, "-an", "-c:v", "copy", "-y", salida])
     if reemplazar:
-        return run_ffmpeg(["ffmpeg", "-i", entrada, "-i", reemplazar,
+        return run_ffmpeg([FFMPEG, "-i", entrada, "-i", reemplazar,
                            "-c:v", "copy", "-map", "0:v:0", "-map", "1:a:0",
                            "-shortest", "-y", salida])
     if bg_music:
         fc = (f"[0:a]volume={orig_vol}[a1];"
               f"[1:a]volume={bg_vol}[a2];"
               f"[a1][a2]amix=inputs=2:duration=first[outa]")
-        return run_ffmpeg(["ffmpeg", "-i", entrada, "-i", bg_music,
+        return run_ffmpeg([FFMPEG, "-i", entrada, "-i", bg_music,
                            "-filter_complex", fc, "-map", "0:v", "-map", "[outa]",
                            "-c:v", "copy", "-y", salida])
     if sil_ini is not None and sil_fin is not None:
-        return run_ffmpeg(["ffmpeg", "-i", entrada,
+        return run_ffmpeg([FFMPEG, "-i", entrada,
                            "-af", f"volume=enable='between(t,{sil_ini},{sil_fin})':volume=0",
                            "-c:v", "copy", "-y", salida])
     if volumen != 1.0:
-        return run_ffmpeg(["ffmpeg", "-i", entrada, "-af", f"volume={volumen}",
+        return run_ffmpeg([FFMPEG, "-i", entrada, "-af", f"volume={volumen}",
                            "-c:v", "copy", "-y", salida])
     shutil.copy(entrada, salida)
     return True, ""
@@ -245,7 +248,7 @@ def op_imagen(
         shutil.copy(entrada, salida)
         return True, ""
 
-    cmd = ["ffmpeg", "-i", entrada]
+    cmd = [FFMPEG, "-i", entrada]
     if fv:
         cmd += ["-vf", ",".join(fv)]
     if fa:
@@ -264,19 +267,19 @@ def op_texto(
     dt = (f"drawtext=text='{txt}':fontsize={tamaño}:fontcolor={color}"
           f":x={pos_x}:y={pos_y}:enable='between(t,{inicio},{fin})'"
           f":box=1:boxcolor=black@0.4:boxborderw=6")
-    return run_ffmpeg(["ffmpeg", "-i", entrada, "-vf", dt,
+    return run_ffmpeg([FFMPEG, "-i", entrada, "-vf", dt,
                        "-codec:a", "copy", "-y", salida])
 
 
 def op_exportar(entrada: str, salida: str, resolucion: str, solo_audio: bool = False) -> tuple[bool, str]:
     if solo_audio:
-        return run_ffmpeg(["ffmpeg", "-i", entrada, "-vn",
+        return run_ffmpeg([FFMPEG, "-i", entrada, "-vn",
                            "-acodec", "libmp3lame", "-q:a", "2", "-y", salida])
     escalas = {"1080p": ("1920", "1080"), "720p": ("1280", "720"), "480p": ("854", "480")}
     w, h = escalas.get(resolucion, ("1280", "720"))
     vf = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
           f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2")
-    return run_ffmpeg(["ffmpeg", "-i", entrada, "-vf", vf,
+    return run_ffmpeg([FFMPEG, "-i", entrada, "-vf", vf,
                        "-c:v", "libx264", "-crf", "23", "-preset", "fast",
                        "-c:a", "aac", "-b:a", "128k", "-y", salida])
 
@@ -340,24 +343,42 @@ def mostrar_video_editor():
         st.code("brew install ffmpeg", language="bash")
         return
 
-    # ── 1. Subida ────────────────────────────────────────────────────────────
-    st.subheader("1. Subí el video a editar")
-    archivo = st.file_uploader(
-        "Seleccioná el video",
-        type=["mp4", "mov", "avi", "mkv", "webm"],
-        key="ve_upload"
-    )
+    # ── 1. Video de entrada ───────────────────────────────────────────────────
+    st.subheader("1. Video a editar")
 
-    if not archivo:
-        st.info("Subí un video para ver las opciones de edición.")
-        return
+    ruta_auto = ""
+    for key in ("ve_ruta", "comp_resultado_ruta", "video_compilado_ruta"):
+        ruta = st.session_state.get(key, "")
+        if ruta and Path(ruta).exists():
+            ruta_auto = ruta
+            break
 
-    if st.session_state.get("ve_nombre") != archivo.name:
-        ruta = guardar_upload(archivo)
-        st.session_state["ve_ruta"] = ruta
-        st.session_state["ve_nombre"] = archivo.name
-
-    ruta_video = st.session_state["ve_ruta"]
+    if ruta_auto:
+        col_info, col_cambiar = st.columns([4, 1])
+        with col_info:
+            st.success(f"✅ Video disponible desde el Compilador — {Path(ruta_auto).name}")
+        with col_cambiar:
+            if st.button("🔄 Cambiar", key="ve_cambiar_video", use_container_width=True):
+                for k in ("ve_ruta", "ve_nombre", "comp_resultado_ruta", "video_compilado_ruta"):
+                    st.session_state.pop(k, None)
+                st.rerun()
+        ruta_video = ruta_auto
+        st.session_state["ve_ruta"] = ruta_auto
+        st.session_state["ve_nombre"] = Path(ruta_auto).name
+    else:
+        archivo = st.file_uploader(
+            "Seleccioná el video",
+            type=["mp4", "mov", "avi", "mkv", "webm"],
+            key="ve_upload"
+        )
+        if not archivo:
+            st.info("Subí un video para ver las opciones de edición.")
+            return
+        if st.session_state.get("ve_nombre") != archivo.name:
+            ruta = guardar_upload(archivo)
+            st.session_state["ve_ruta"] = ruta
+            st.session_state["ve_nombre"] = archivo.name
+        ruta_video = st.session_state["ve_ruta"]
     info = obtener_info_video(ruta_video)
     dur = info["duracion"]
 
@@ -371,7 +392,7 @@ def mostrar_video_editor():
     col3.metric("FPS", info["fps"])
     col4.metric("Audio", "Sí" if info["tiene_audio"] else "No")
 
-    st.video(archivo)
+    st.video(ruta_video)
     st.markdown("---")
 
     # ── Panel de ediciones ───────────────────────────────────────────────────
@@ -747,7 +768,7 @@ def mostrar_video_editor():
                         f.write(srt)
 
                     srt_esc = srt_path.replace(":", "\\:").replace("'", "\\'")
-                    ok, err = run_ffmpeg(["ffmpeg", "-i", ruta_video, "-vf",
+                    ok, err = run_ffmpeg([FFMPEG, "-i", ruta_video, "-vf",
                                           f"subtitles='{srt_esc}'", "-c:a", "copy", "-y", vid_path])
                     if ok:
                         st.success("✅ Subtítulos generados.")

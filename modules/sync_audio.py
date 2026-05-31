@@ -343,13 +343,27 @@ Cuando armás una compilación (ej: goles, fails, animales), la narración gené
 **En tu editor (CapCut/Premiere):** Importás el MP3 sincronizado y lo ponés en la pista de audio — listo, no necesitás ajustar nada.
         """)
 
-    # ── Subir video ───────────────────────────────────────────
-    st.subheader("1. Subí tu video compilado")
-    archivo = st.file_uploader("Video (MP4, MOV)", type=["mp4", "mov", "avi", "mkv"], key="sync_video")
+    # ── Video de entrada ──────────────────────────────────────
+    st.subheader("1. Video compilado")
+    _ruta_compilado = st.session_state.get("ve_ruta") or st.session_state.get("comp_resultado_ruta")
+    archivo = None
+    ruta_video_previa = None
 
-    if not archivo:
-        st.info("Subí el video para continuar.")
-        return
+    if _ruta_compilado and Path(_ruta_compilado).exists():
+        col_si, col_sc = st.columns([4, 1])
+        with col_si:
+            st.success(f"✅ Video disponible desde el Compilador — {Path(_ruta_compilado).name}")
+        with col_sc:
+            if st.button("🔄 Cambiar", key="sync_cambiar_video", use_container_width=True):
+                st.session_state.pop("ve_ruta", None)
+                st.session_state.pop("comp_resultado_ruta", None)
+                st.rerun()
+        ruta_video_previa = _ruta_compilado
+    else:
+        archivo = st.file_uploader("Video (MP4, MOV)", type=["mp4", "mov", "avi", "mkv"], key="sync_video")
+        if not archivo:
+            st.info("Subí el video para continuar.")
+            return
 
     # ── Configuración ─────────────────────────────────────────
     st.subheader("2. Configuración")
@@ -459,7 +473,7 @@ Cuando armás una compilación (ej: goles, fails, animales), la narración gené
     st.markdown("---")
 
     # Detectar si cambió el video (nombre distinto al procesado antes)
-    nombre_actual = archivo.name if archivo else ""
+    nombre_actual = Path(ruta_video_previa).name if ruta_video_previa else (archivo.name if archivo else "")
     if st.session_state.get("sync_nombre_video") != nombre_actual:
         for k in ["sync_clips_raw", "sync_narraciones", "sync_ruta_video", "sync_carpeta_temp"]:
             st.session_state.pop(k, None)
@@ -473,11 +487,14 @@ Cuando armás una compilación (ej: goles, fails, animales), la narración gené
 
         carpeta_temp = tempfile.mkdtemp()
 
-        # Guardar video en disco temporal (persiste entre reruns)
-        ext = archivo.name.split(".")[-1]
-        ruta_video = os.path.join(carpeta_temp, f"video.{ext}")
-        with open(ruta_video, "wb") as f:
-            f.write(archivo.getvalue())
+        # Usar video pre-cargado o guardar el archivo subido
+        if ruta_video_previa:
+            ruta_video = ruta_video_previa
+        else:
+            ext = archivo.name.split(".")[-1]
+            ruta_video = os.path.join(carpeta_temp, f"video.{ext}")
+            with open(ruta_video, "wb") as f:
+                f.write(archivo.getvalue())
 
         # Paso 1 — Detectar escenas
         with st.spinner("Detectando cortes de escena..."):

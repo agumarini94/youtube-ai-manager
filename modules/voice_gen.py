@@ -13,6 +13,23 @@ import requests
 ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1"
 
 
+# ── Función headless (sin Streamlit) ──────────────────────────────────────────
+
+def generate_voiceover(texto: str, voz_id: str | None = None) -> str | None:
+    """
+    Genera un archivo MP3 con el texto narrado por ElevenLabs.
+    Retorna la ruta al MP3 descargado, o None si falla / no está configurado.
+
+    TODO: implementar llamada real a ElevenLabs
+    - endpoint: POST https://api.elevenlabs.io/v1/text-to-speech/{voice_id}
+    - headers: {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
+    - body: {"text": texto, "model_id": "eleven_multilingual_v2", "voice_settings": {...}}
+    - guardar response.content como .mp3 en tempfile y retornar la ruta
+    - integrar el MP3 en historia_reel.py como pista de audio principal (reemplaza música)
+    """
+    return None
+
+
 def obtener_api_key() -> str | None:
     """Retorna la API key de ElevenLabs o None si no está configurada."""
     api_key = os.getenv("ELEVENLABS_API_KEY")

@@ -3,6 +3,7 @@ Búsqueda y selección de videos de TikTok para el workflow automático.
 Headless — sin Streamlit. Se puede llamar desde el scheduler o el bot.
 """
 import json
+import logging
 import os
 import random
 import subprocess
@@ -11,6 +12,8 @@ from pathlib import Path
 
 import anthropic
 import requests
+
+logger = logging.getLogger(__name__)
 
 TIKWM = "https://www.tikwm.com/api/"
 
@@ -77,6 +80,7 @@ CATEGORIAS: dict[str, str] = {
 
 _TAGS_GENERALES = ["fails", "animalfails", "humor", "prank", "kidsfails", "sportsfails", "funny"]
 _HISTORIAL = Path(__file__).parent.parent / "data" / "historial_videos.json"
+MIN_VISTAS = 1_000
 
 
 # ── Historial ──────────────────────────────────────────────────────────────────
@@ -178,6 +182,51 @@ def _buscar_hashtag(tag: str, cantidad: int = 20) -> list[dict]:
         return []
 
 
+def _buscar_keywords(query: str, cantidad: int = 20) -> list[dict]:
+    """Busca videos por palabra clave via tikwm feed/search (complementa hashtags)."""
+    try:
+        r = requests.post(
+            "https://www.tikwm.com/api/feed/search",
+            data={"keywords": query, "count": cantidad, "cursor": 0},
+            headers=_HEADERS,
+            timeout=15,
+        )
+        data = r.json()
+        if data.get("code") != 0:
+            return []
+
+        # feed/search puede devolver data como dict con "videos" o directamente como lista
+        raw = data.get("data", {})
+        if isinstance(raw, list):
+            items = raw
+        elif isinstance(raw, dict):
+            items = raw.get("videos") or raw.get("data") or []
+        else:
+            return []
+
+        videos = []
+        for item in items:
+            autor = item.get("author") or {}
+            uid = autor.get("unique_id") or autor.get("uniqueId") or ""
+            vid_id = str(item.get("video_id") or item.get("id") or "")
+            if not vid_id:
+                continue
+            videos.append({
+                "id": vid_id,
+                "titulo": item.get("title") or item.get("desc") or "Sin título",
+                "canal": uid,
+                "vistas": int(item.get("play_count") or item.get("playCount") or 0),
+                "duracion": int(item.get("duration") or 0),
+                "thumbnail": item.get("cover") or item.get("origin_cover") or item.get("originCover") or "",
+                "url": f"https://www.tiktok.com/@{uid}/video/{vid_id}",
+                "download_url": item.get("play") or "",
+                "download_url_wm": item.get("wmplay") or "",
+            })
+        return videos
+    except Exception:
+        return []
+
+
 # ── Descarga ───────────────────────────────────────────────────────────────────
 
 def _codec_ok(ruta: str) -> bool:
@@ -239,23 +288,28 @@ def _claude_seleccionar(candidatos: list[dict], n: int) -> list[dict]:
     )
     try:
         resp = client.messages.create(
-            model="claude-3-haiku-20240307",
-            max_tokens=150,
+            model="claude-haiku-4-5-20251001",
+            max_tokens=200,
             messages=[{"role": "user", "content": (
                 f"Seleccioná los mejores {n} videos de TikTok para una compilación de "
-                f"humor/entretenimiento. Priorizá: duración 8-45s, alto engagement, "
-                f"variedad de creadores (no repetir el mismo canal).\n\n"
-                f"CRÍTICO — el orden determina si el video consigue vistas o no:\n"
-                f"• Posición 1 (HOOK): el clip MÁS sorprendente, gracioso o impactante. "
-                f"Si no engancha en los primeros 3-5 segundos, la gente hace swipe y "
-                f"YouTube deja de distribuir el video.\n"
-                f"• Posiciones intermedias: clips buenos para mantener el ritmo, "
-                f"alternando entre intensidad alta y media.\n"
-                f"• Última posición: un clip fuerte o gracioso para que la gente "
-                f"vea hasta el final (el % de retención al final es clave para el algoritmo).\n\n"
+                f"humor/entretenimiento en YouTube Shorts. "
+                f"Priorizá: duración 10-40s (evitar clips muy cortos <6s), altas vistas "
+                f"(más vistas = más validado), variedad de creadores (no repetir canal).\n\n"
+                f"CRITERIOS DE SELECCIÓN (orden de prioridad):\n"
+                f"1. Hook visual potente — algo ocurre de inmediato, sin introducción lenta\n"
+                f"2. Más de 50K vistas — validado por el algoritmo de TikTok\n"
+                f"3. Duración ideal 10-35s — clips muy cortos rompen el ritmo\n"
+                f"4. Diversidad de creadores y tipos de situación\n\n"
+                f"ORDEN CRÍTICO (determina si el video consigue retención):\n"
+                f"• Posición 1 (HOOK): el clip MÁS sorprendente o impactante visualmente. "
+                f"Sin enganche en 3-5s → swipe y el algoritmo deja de distribuirlo.\n"
+                f"• Posiciones intermedias: alternancia de intensidad alta y media.\n"
+                f"• Última posición: clip fuerte que recompense ver hasta el final "
+                f"(retención al 100% es señal clave para el algoritmo).\n\n"
+                f"DESCARTAR: títulos genéricos o vacíos, canales repetidos, "
+                f"duración <6s o >50s, vistas muy bajas (<10K).\n\n"
                 f"{lista}\n\n"
-                f"Respondé SOLO los números EN EL ORDEN EXACTO en que deben aparecer "
-                f"en el video, separados por coma. Ej: 7,2,15,4"
+                f"Respondé SOLO los números EN EL ORDEN EXACTO, separados por coma. Ej: 7,2,15,4"
             )}],
         )
         indices = [int(x.strip()) - 1 for x in resp.content[0].text.strip().split(",")]
@@ -316,35 +370,92 @@ def buscar_hashtags(max_duracion: int = 60, tag: str | None = None, pais: str | 
          "general" también usa mezcla aleatoria.
     pais: sufijo de país (ej. "argentina"). None = global.
     """
+    # Para reels (max_duracion ≤ 30s), buscamos con límite relajado para tener más candidatos.
+    # La compilación se encarga de recortar cada clip a max_duracion al normalizar.
+    max_dur_busqueda = max_duracion if max_duracion > 30 else 60
+
     historial = cargar_historial()
     candidatos: list[dict] = []
     ids_vistos: set[str] = set()
 
     if tag and tag != "general":
-        if pais:
-            # Buscar combinación país+categoría, categoría sola y país solo
-            tags_a_buscar = [f"{tag}{pais}", tag, pais]
-            cantidad_por_tag = 25
+        tag_sin_espacios = tag.replace(" ", "")
+        if " " not in tag:
+            # Término de una sola palabra: buscar también como hashtag challenge
+            if pais:
+                tags_a_buscar = [f"{tag_sin_espacios}{pais}", tag_sin_espacios, pais]
+                cantidad_por_tag = 50
+            else:
+                tags_a_buscar = [tag_sin_espacios]
+                cantidad_por_tag = 80
         else:
-            tags_a_buscar = [tag]
-            cantidad_por_tag = 40
+            # Términos con espacios no funcionan como hashtag — solo keyword search
+            tags_a_buscar = []
+            cantidad_por_tag = 0
+
+        # Keyword search: siempre usar texto original (con espacios)
+        keywords_a_buscar = [tag, f"{tag} viral", f"best {tag}"]
+        if pais:
+            keywords_a_buscar.append(f"{tag} {pais}")
     else:
-        base = random.sample(_TAGS_GENERALES, min(3, len(_TAGS_GENERALES)))
+        base = random.sample(_TAGS_GENERALES, min(4, len(_TAGS_GENERALES)))
         tags_a_buscar = (base + [pais]) if pais else base
-        cantidad_por_tag = 20
+        cantidad_por_tag = 40
+        keywords_a_buscar = list(base[:3])
 
-    # Buscar todos los tags en paralelo en vez de secuencialmente
-    with ThreadPoolExecutor(max_workers=len(tags_a_buscar)) as ex:
-        resultados = ex.map(lambda t: _buscar_hashtag(t, cantidad=cantidad_por_tag), tags_a_buscar)
+    # Buscar hashtags y keywords en paralelo
+    todas_fuentes = (
+        [("hashtag", t, cantidad_por_tag) for t in tags_a_buscar]
+        + [("keywords", k, 40) for k in keywords_a_buscar]
+    )
 
-    for videos_tag in resultados:
-        for v in videos_tag:
-            if (v["id"] and
-                    v["id"] not in historial and
-                    v["id"] not in ids_vistos and
-                    3 <= v.get("duracion", 0) <= max_duracion):
-                candidatos.append(v)
+    def _fetch(fuente):
+        tipo, query, cant = fuente
+        if tipo == "hashtag":
+            return _buscar_hashtag(query, cantidad=cant)
+        return _buscar_keywords(query, cantidad=cant)
+
+    if not todas_fuentes:
+        return []
+
+    logger.info(f"buscar_hashtags: tag={tag!r} pais={pais!r} max_dur={max_duracion}s "
+                f"(buscando hasta {max_dur_busqueda}s) | {len(todas_fuentes)} fuentes")
+
+    with ThreadPoolExecutor(max_workers=min(len(todas_fuentes), 8)) as ex:
+        resultados = list(ex.map(_fetch, todas_fuentes))
+
+    total_crudos = sum(len(r) for r in resultados)
+    descartados_historial = descartados_dur = descartados_vistas = 0
+
+    for videos_lista in resultados:
+        for v in videos_lista:
+            if not v["id"] or v["id"] in ids_vistos:
+                continue
+            if v["id"] in historial:
+                descartados_historial += 1
                 ids_vistos.add(v["id"])
+                continue
+            if not (3 <= v.get("duracion", 0) <= max_dur_busqueda):
+                descartados_dur += 1
+                ids_vistos.add(v["id"])
+                continue
+            if v.get("vistas", 0) < MIN_VISTAS:
+                descartados_vistas += 1
+                ids_vistos.add(v["id"])
+                continue
+            candidatos.append(v)
+            ids_vistos.add(v["id"])
+
+    logger.info(
+        f"  crudos={total_crudos} → "
+        f"historial=-{descartados_historial} "
+        f"duración=-{descartados_dur} "
+        f"vistas<{MIN_VISTAS}=-{descartados_vistas} "
+        f"→ candidatos={len(candidatos)}"
+    )
+
+    # Ordenar por vistas descendente — los más populares primero para Claude
+    candidatos.sort(key=lambda x: x.get("vistas", 0), reverse=True)
     return candidatos
 
 

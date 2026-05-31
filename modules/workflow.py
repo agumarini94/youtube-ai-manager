@@ -95,7 +95,7 @@ def _encontrar_momento_hook(ruta_video: str) -> int | None:
 
         client = anthropic.Anthropic(api_key=api_key)
         resp = client.messages.create(
-            model="claude-3-haiku-20240307",
+            model="claude-haiku-4-5-20251001",
             max_tokens=10,
             messages=[{"role": "user", "content": content}],
         )
@@ -144,7 +144,8 @@ def _aplicar_hook(ruta_video: str, inicio_seg: int, carpeta: str) -> str:
     return ruta_video
 
 
-def compilar_y_generar_seo(clips: list[dict], formato: str = "video", progress_cb=None) -> dict:
+def compilar_y_generar_seo(clips: list[dict], formato: str = "video", progress_cb=None,
+                           musica: str | None = None, volumen: float = 0.15) -> dict:
     """
     Descarga clips, compila y genera SEO.
     Retorna {'ok': bool, 'video': str, 'preview': str, 'seo': dict,
@@ -157,7 +158,7 @@ def compilar_y_generar_seo(clips: list[dict], formato: str = "video", progress_c
             progress_cb(txt)
 
     dual = (formato == "ambos")
-    total = 6 if dual else 5
+    total = (6 if dual else 5) + (1 if musica else 0)
     paso = 1
 
     carpeta_tmp = tempfile.mkdtemp(prefix="ytbot_")
@@ -166,15 +167,17 @@ def compilar_y_generar_seo(clips: list[dict], formato: str = "video", progress_c
     notify(f"📥 <b>Paso {paso}/{total} — Descargando {len(clips)} clips...</b>")
     paso += 1
     descargados = descargar_clips(clips, carpeta_tmp, progress_cb=progress_cb)
-    if len(descargados) < 2:
-        return {"ok": False, "error": f"Solo se descargó {len(descargados)} clip(s). Se necesitan al menos 2."}
+    if len(descargados) < 1:
+        return {"ok": False, "error": "No se pudo descargar ningún clip. Verificá las URLs e intentá de nuevo."}
 
     tipo_label = "Short vertical (1080×1920)" if dual else f"{ancho}×{alto}"
     notify(f"✂️ <b>Paso {paso}/{total} — Compilando {len(descargados)} clips ({tipo_label})...</b>\n<i>Esto tarda 1-3 min según el largo</i>")
     paso += 1
     salida = os.path.join(carpeta_tmp, "compilacion.mp4")
     rutas = [c["ruta"] for c in descargados]
-    ok, err = concatenar_clips(rutas, salida, ancho, alto)
+    # Para reels/ambos: recortar cada clip a 15s — YouTube Shorts distribuye mejor bajo 60s total
+    max_seg_clip = 15 if formato in ("reel", "ambos") else None
+    ok, err = concatenar_clips(rutas, salida, ancho, alto, max_seg_por_clip=max_seg_clip)
     if not ok:
         return {"ok": False, "error": f"Error en compilación: {err}"}
 
@@ -200,6 +203,19 @@ def compilar_y_generar_seo(clips: list[dict], formato: str = "video", progress_c
     except Exception:
         pass
 
+    if musica and Path(musica).exists():
+        from modules.music_manager import mezclar_musica
+        nombre_musica = Path(musica).stem
+        notify(f"🎵 <b>Paso {paso}/{total} — Mezclando música de fondo: {nombre_musica}...</b>")
+        paso += 1
+        salida_con_musica = os.path.join(carpeta_tmp, "compilacion_con_musica.mp4")
+        if mezclar_musica(salida, musica, salida_con_musica, volumen=volumen):
+            salida = salida_con_musica
+            if video_horizontal:
+                salida_h_musica = os.path.join(carpeta_tmp, "compilacion_horizontal_musica.mp4")
+                if mezclar_musica(video_horizontal, musica, salida_h_musica, volumen=volumen):
+                    video_horizontal = salida_h_musica
+
     notify(f"🖼 <b>Paso {paso}/{total} — Generando preview y extrayendo frames...</b>")
     paso += 1
     preview = os.path.join(carpeta_tmp, "preview.mp4")
@@ -208,12 +224,14 @@ def compilar_y_generar_seo(clips: list[dict], formato: str = "video", progress_c
 
     notify(f"🤖 <b>Paso {paso}/{total} — Claude analizando el video, generando SEO y thumbnail...</b>")
     titulos = ", ".join(c.get("titulo", "")[:40] for c in descargados)
+    tipo_label = "YouTube Short viral" if formato in ("reel", "ambos") else "Compilación viral de humor"
     seo = generar_seo(
-        descripcion=f"Compilación de videos virales: {titulos}",
-        tipo="Compilación viral de humor",
+        descripcion=f"Compilación de videos virales de TikTok: {titulos}",
+        tipo=tipo_label,
         canal_handle="",
         idioma="Español",
         frames_b64=frames if frames else None,
+        formato=formato,
     )
 
     guardar_en_historial([c["id"] for c in descargados])
@@ -316,7 +334,7 @@ def generar_recomendacion_horario(categoria: str | None = None) -> dict:
                 f'"hora_local":"18:00","razon":"...breve explicación de por qué este horario..."}}'
             )
             resp = client.messages.create(
-                model="claude-3-haiku-20240307",
+                model="claude-haiku-4-5-20251001",
                 max_tokens=250,
                 messages=[{"role": "user", "content": prompt}],
             )
@@ -363,7 +381,7 @@ def subir_a_youtube(ruta_video: str, seo: dict, fecha_publicacion: str | None = 
 
     token_file = Path(__file__).parent.parent / "token_youtube.json"
     if not token_file.exists():
-        return None
+        raise RuntimeError("No se encontró token_youtube.json — autenticá desde Streamlit primero.")
 
     try:
         scopes = [
@@ -376,7 +394,7 @@ def subir_a_youtube(ruta_video: str, seo: dict, fecha_publicacion: str | None = 
             with open(token_file, "w") as f:
                 f.write(creds.to_json())
         if not creds.valid:
-            return None
+            raise RuntimeError("Credenciales de YouTube inválidas o expiradas — reautenticá desde Streamlit.")
 
         youtube = build("youtube", "v3", credentials=creds)
         if fecha_publicacion:
@@ -424,9 +442,10 @@ def subir_a_youtube(ruta_video: str, seo: dict, fecha_publicacion: str | None = 
                 print(f"[thumbnail upload warning] {e_th}")
 
         return f"https://www.youtube.com/watch?v={video_id}"
+    except RuntimeError:
+        raise
     except Exception as e:
-        print(f"[YouTube upload error] {e}")
-        return None
+        raise RuntimeError(str(e)) from e
 
 
 def _comprimir_preview(entrada: str, salida: str, max_mb: int = 45) -> bool:

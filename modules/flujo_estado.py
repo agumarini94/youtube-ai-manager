@@ -21,6 +21,12 @@ def _inicial() -> dict:
         "video_preview": None,
         "seo": None,
         "recomendacion_horario": None,  # dict con dia_nombre, hora_local, razon, iso_utc
+        "musica_ruta": None,            # ruta al archivo MP3/M4A seleccionado
+        "musica_nombre": None,          # nombre del track para mostrar
+        "musica_seleccionada": False,   # True una vez que el usuario tomó una decisión
+        "musica_volumen": 0.15,         # fracción de volumen para mezcla (0.08/0.15/0.25)
+        "canciones_resultados": [],     # lista de {titulo, url, duracion, id} de la búsqueda
+        "cancion_idx": 0,               # índice del resultado que se está mostrando
         "mensaje_id": None,
         "chat_id": None,
         "timestamp": None,

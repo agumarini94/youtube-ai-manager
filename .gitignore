@@ -6,6 +6,9 @@ token_youtube.json
 
 # ── Datos personales / historial ───────────────────────────────────────────────
 data/
+eleccion_historial.json
+MI_GUIA.txt
+debug_busqueda.py
 
 # ── Entorno virtual ────────────────────────────────────────────────────────────
 venv/

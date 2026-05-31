@@ -22,6 +22,49 @@ def obtener_cliente_youtube():
     return build("youtube", "v3", developerKey=api_key)
 
 
+def _resolver_por_handle(youtube, handle: str) -> str | None:
+    """Llama a channels().list(forHandle=...) y devuelve el Channel ID o None."""
+    try:
+        resp = youtube.channels().list(
+            part="id",
+            forHandle=f"@{handle}",
+        ).execute()
+        items = resp.get("items", [])
+        return items[0]["id"] if items else None
+    except HttpError:
+        return None
+
+
+def resolver_canal_id(youtube, entrada: str) -> str | None:
+    """
+    Acepta @handle, URL de canal o Channel ID (UC...) y devuelve el Channel ID.
+    Retorna None si no pudo resolverlo.
+    """
+    entrada = entrada.strip()
+
+    # URL con /channel/UCxxxxxx
+    if "youtube.com/channel/" in entrada:
+        cid = entrada.split("youtube.com/channel/")[-1].split("/")[0].split("?")[0]
+        if cid.startswith("UC"):
+            return cid
+
+    # URL con /@handle
+    if "youtube.com/@" in entrada:
+        handle = entrada.split("youtube.com/@")[-1].split("/")[0].split("?")[0]
+        return _resolver_por_handle(youtube, handle)
+
+    # @handle directo
+    if entrada.startswith("@"):
+        return _resolver_por_handle(youtube, entrada[1:])
+
+    # Channel ID directo
+    if entrada.startswith("UC") and len(entrada) >= 20:
+        return entrada
+
+    # Último recurso: tratar como handle sin @
+    return _resolver_por_handle(youtube, entrada)
+
+
 def obtener_estadisticas_canal(youtube, channel_id: str) -> dict | None:
     """Obtiene estadísticas generales del canal desde la API de YouTube."""
     try:
@@ -31,7 +74,7 @@ def obtener_estadisticas_canal(youtube, channel_id: str) -> dict | None:
         ).execute()
 
         if not respuesta.get("items"):
-            st.error("❌ No se encontró el canal. Verifica el YOUTUBE_CHANNEL_ID en .env")
+            st.error("❌ No se encontró el canal. Verificá el handle, URL o Channel ID ingresado.")
             return None
 
         canal = respuesta["items"][0]
@@ -158,11 +201,12 @@ def mostrar_analizador():
 Conecta con tu canal de YouTube, muestra tus estadísticas reales y usa Claude para analizar qué contenido funciona mejor.
 
 **Pasos:**
-1. Ingresa tu **Channel ID** en el campo de abajo
-   - Lo encontrás en YouTube Studio → Configuración → Información del canal
-   - Empieza con `UC...`
-2. Elige cuántos videos analizar (recomendado: 20)
-3. Presiona **Analizar Canal**
+1. Ingresa tu canal en el campo de abajo (cualquiera de estos formatos funciona):
+   - **@handle** → `@MiCanal`
+   - **URL del canal** → `https://www.youtube.com/@MiCanal`
+   - **Channel ID** → `UCxxxxxxxxxxxxxxxxxxxxxxxxx`
+2. Elegí cuántos videos analizar (recomendado: 20)
+3. Presioná **Analizar Canal**
 
 **Qué vas a ver:**
 - Suscriptores, vistas totales y cantidad de videos
@@ -173,13 +217,12 @@ Conecta con tu canal de YouTube, muestra tus estadísticas reales y usa Claude p
 **Tip:** Si no tenés canal todavía, podés saltarte este módulo y empezar por Tendencias Virales.
         """)
 
-    # Input del Channel ID (usa .env por defecto pero permite sobrescribir)
-    channel_id_default = os.getenv("YOUTUBE_CHANNEL_ID", "")
-    channel_id = st.text_input(
-        "ID del Canal de YouTube",
-        value=channel_id_default,
-        placeholder="UCxxxxxxxxxxxxxxxxxxxxxxxxx",
-        help="Lo encuentras en YouTube Studio > Configuración > Información del canal"
+    canal_default = os.getenv("YOUTUBE_CHANNEL_ID", "")
+    canal_input = st.text_input(
+        "Canal de YouTube",
+        value=canal_default,
+        placeholder="@MiCanal  /  https://youtube.com/@MiCanal  /  UCxxxxxxx",
+        help="Aceptamos @handle, URL completa del canal o Channel ID (UC...)"
     )
 
     col1, col2 = st.columns([1, 3])
@@ -190,12 +233,22 @@ Conecta con tu canal de YouTube, muestra tus estadísticas reales y usa Claude p
         analizar = st.button("🔍 Analizar Canal", type="primary", use_container_width=True)
 
     if analizar:
-        if not channel_id:
-            st.warning("⚠️ Ingresa el ID de tu canal primero.")
+        if not canal_input.strip():
+            st.warning("⚠️ Ingresá el handle, URL o Channel ID de tu canal primero.")
             return
 
         youtube = obtener_cliente_youtube()
         if not youtube:
+            return
+
+        with st.spinner("Resolviendo canal..."):
+            channel_id = resolver_canal_id(youtube, canal_input)
+
+        if not channel_id:
+            st.error(
+                "❌ No se pudo encontrar el canal. "
+                "Verificá que el @handle o la URL sean correctos y que el canal sea público."
+            )
             return
 
         with st.spinner("Obteniendo estadísticas del canal..."):

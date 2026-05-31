@@ -130,25 +130,42 @@ def _http_download(url: str, ruta: str) -> bool:
 
 def descargar_tiktok(video: dict, carpeta: str) -> str | None:
     """
-    Descarga el video en H.264 compatible con FFmpeg.
-    Orden: wmplay primero (siempre H.264, puede tener marca de agua pequeña),
-    luego hdplay/play como fallback si wmplay no está disponible.
+    Descarga el video sin marca de agua en H.264 compatible con FFmpeg.
+    Orden: hdplay primero (sin watermark), re-encode si es BVC2,
+    wmplay solo como último recurso si hdplay no está disponible.
     """
     video_id = video.get("id", "video")
-    # wmplay va primero: es la versión de compartir de TikTok, siempre H.264
-    # hdplay puede ser BVC2 (codec propietario de ByteDance, FFmpeg no lo soporta)
-    intentos = [
-        (video.get("download_url_wm", ""), f"{video_id}_wm.mp4"),
-        (video.get("download_url", ""),    f"{video_id}.mp4"),
-    ]
-    for url, nombre in intentos:
-        if not url:
-            continue
-        ruta = os.path.join(carpeta, nombre)
-        if _http_download(url, ruta):
-            if _codec_compatible(ruta):
-                return ruta
-            Path(ruta).unlink(missing_ok=True)
+
+    # 1. Intentar hdplay/play (sin marca de agua)
+    url_hd = video.get("download_url", "")
+    if url_hd:
+        ruta_hd = os.path.join(carpeta, f"{video_id}.mp4")
+        if _http_download(url_hd, ruta_hd):
+            if _codec_compatible(ruta_hd):
+                return ruta_hd
+            # BVC2 u otro codec incompatible — re-encodear a H.264
+            ruta_conv = os.path.join(carpeta, f"{video_id}_conv.mp4")
+            import subprocess as _sp
+            res = _sp.run(
+                [_FFMPEG, "-i", ruta_hd,
+                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                 "-c:a", "aac", "-b:a", "128k", "-y", ruta_conv],
+                capture_output=True, timeout=120,
+            )
+            Path(ruta_hd).unlink(missing_ok=True)
+            if res.returncode == 0 and Path(ruta_conv).stat().st_size > 10_000:
+                return ruta_conv
+            Path(ruta_conv).unlink(missing_ok=True)
+
+    # 2. Fallback: wmplay (H.264 garantizado pero tiene watermark de TikTok)
+    url_wm = video.get("download_url_wm", "")
+    if url_wm:
+        ruta_wm = os.path.join(carpeta, f"{video_id}_wm.mp4")
+        if _http_download(url_wm, ruta_wm):
+            if _codec_compatible(ruta_wm):
+                return ruta_wm
+            Path(ruta_wm).unlink(missing_ok=True)
+
     return None
 
 

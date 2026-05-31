@@ -474,7 +474,7 @@ Sube tu video terminado directamente a YouTube con todos los metadatos, sin entr
     archivo_video = None
 
     if ruta_preexistente and Path(ruta_preexistente).exists():
-        st.success(f"✅ Video listo desde la compilación: `{Path(ruta_preexistente).name}`")
+        st.success(f"✅ Video disponible desde el Compilador — {Path(ruta_preexistente).name}")
         st.video(ruta_preexistente)
         if st.button("📁 Elegir un video diferente", key="btn_cambiar_video"):
             st.session_state.pop("video_para_subir", None)

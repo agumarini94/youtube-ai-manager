@@ -65,37 +65,88 @@ def extraer_frames_thumbnail(ruta_video: str, cantidad: int = 6) -> list[str]:
 
 
 def generar_seo(descripcion: str, tipo: str, canal_handle: str, idioma: str,
-                frames_b64: list[str] | None = None) -> dict:
+                frames_b64: list[str] | None = None,
+                formato: str = "video",
+                angulo: str = "") -> dict:
     """
     Genera título, descripción optimizada y tags usando Claude.
     Si hay frames, Claude analiza el video visualmente.
+    formato: "video" | "reel" | "ambos" — ajusta el SEO para Shorts si corresponde.
     """
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         return {"error": "❌ Falta ANTHROPIC_API_KEY en el .env"}
 
-    handle_txt = f"Incluí '{canal_handle}' en la descripción (al final del primer párrafo o en el cierre) para que los espectadores encuentren el canal." if canal_handle else ""
+    es_short = formato in ("reel", "ambos")
+    handle_txt = f"Incluí '{canal_handle}' en la descripción." if canal_handle else ""
+    angulo_txt = f"\nÁNGULO EMOCIONAL: {angulo}" if angulo else ""
 
-    prompt = f"""Sos un experto en SEO de YouTube especializado en videos de compilación viral. Tu objetivo es maximizar el CTR (click-through rate) y el alcance orgánico.
+    if es_short:
+        prompt = f"""Sos un experto en crecimiento de YouTube Shorts. Tu objetivo es que este Short explote en el algoritmo.
 
 DESCRIPCIÓN DEL VIDEO: {descripcion}
 TIPO DE CONTENIDO: {tipo}
 IDIOMA: {idioma}
+FORMATO: YouTube Short (vertical, menos de 60 segundos){angulo_txt}
 {handle_txt}
 
-Generá el paquete SEO completo en JSON con esta estructura exacta:
+CONTEXTO CRÍTICO:
+- Los Shorts se descubren casi exclusivamente por el algoritmo, NO por búsqueda
+- El título se muestra TRUNCADO (≤40 chars visibles en el feed de Shorts)
+- El thumbnail importa para búsqueda y sugeridos
+- #Shorts es OBLIGATORIO para que YouTube lo clasifique correctamente
+
+Generá el paquete SEO en JSON:
+
+{{
+  "titulo": "Título de máximo 45 caracteres. Fórmulas que funcionan: '😱 [REACCIÓN EMOCIONAL]', '💀 [SITUACIÓN EXTREMA]', '🤣 [SITUACIÓN GRACIOSA]'. NUNCA genérico. Debe dar FOMO o generar risa solo con leerlo.",
+  "variaciones": [
+    {{"estilo": "🔢 Con número", "titulo": "Variación con número específico (Los 5..., 3 veces que...), máx 45 chars"}},
+    {{"estilo": "❓ Curiosity gap", "titulo": "Variación que genera intriga o sorpresa sin revelar el final, máx 45 chars"}},
+    {{"estilo": "😂 Emocional", "titulo": "Variación con reacción emocional fuerte (lloré, no podía creer, etc.), máx 45 chars"}},
+    {{"estilo": "🎯 Directo", "titulo": "Variación descriptiva y directa del contenido + año si aplica, máx 45 chars"}}
+  ],
+  "descripcion": "Línea 1 (obligatoria): frase de gancho de máx 100 chars que aparece en el feed. Línea 2 en blanco. Luego 2-3 bullets breves con los mejores momentos usando emojis. Al final: #Shorts #viral #funny [otros 8+ hashtags relevantes en {idioma}]{(chr(10) + chr(32)*2 + canal_handle) if canal_handle else ''}.",
+  "tags": ["shorts", "viral", "funny", "fails", "compilation", "humor", "trending", "fyp", "reels", "tiktok"]
+}}
+
+REGLAS para todos los títulos (principal y variaciones):
+- Máximo 45 caracteres incluyendo emoji
+- Empezá con emoji llamativo
+- Usá MAYÚSCULAS para palabras clave si el idioma es español
+- Patrones ganadores: "😱 NO LO PODÍA CREER", "💀 SE CAYÓ EN VIVO", "🤣 ESTE PERRO ES ÚNICO", "😭 LE PASÓ LO PEOR"
+- NUNCA: "Compilación de...", "Los mejores...", títulos de más de 50 chars
+- Las 4 variaciones deben ser distintas entre sí y del título principal
+
+Respondé SOLO con el JSON válido, sin texto extra."""
+    else:
+        prompt = f"""Sos un experto en SEO de YouTube especializado en videos de compilación viral. Tu objetivo es maximizar el CTR y el alcance orgánico.
+
+DESCRIPCIÓN DEL VIDEO: {descripcion}
+TIPO DE CONTENIDO: {tipo}
+IDIOMA: {idioma}{angulo_txt}
+{handle_txt}
+
+Generá el paquete SEO completo en JSON:
 
 {{
   "titulo": "Título viral (máx 70 caracteres, con emoji al inicio, que genere curiosidad y ganas de clickear)",
-  "descripcion": "Descripción completa de YouTube de 150-180 palabras. Estructura: (1) Párrafo de apertura que engancha (2-3 oraciones que describan lo mejor del video, pensado para un reel o Short viral). (2) 3 a 5 bullets con los momentos más divertidos/épicos del video, con emojis, SIN timestamps ni tiempos. (3) Frase de cierre invitando a suscribirse{', mencionar ' + canal_handle if canal_handle else ''}. (4) Hashtags: mínimo 10 hashtags relevantes al final separados por espacios.",
+  "variaciones": [
+    {{"estilo": "🔢 Con número", "titulo": "Variación con número específico (Los 10..., 5 veces que...), máx 70 chars"}},
+    {{"estilo": "❓ Curiosity gap", "titulo": "Variación que genera intriga o sorpresa sin revelar el final, máx 70 chars"}},
+    {{"estilo": "😂 Emocional", "titulo": "Variación con reacción emocional fuerte que conecta con el espectador, máx 70 chars"}},
+    {{"estilo": "🎯 Directo", "titulo": "Variación descriptiva y directa del contenido con año si aplica, máx 70 chars"}}
+  ],
+  "descripcion": "Descripción completa de 150-180 palabras. Estructura: (1) Párrafo de apertura que engancha. (2) 3 a 5 bullets con los mejores momentos, con emojis, SIN timestamps. (3) Frase de cierre invitando a suscribirse. (4) Mínimo 10 hashtags relevantes al final.",
   "tags": ["tag1", "tag2", "tag3", "tag4", "tag5", "tag6", "tag7", "tag8", "tag9", "tag10", "tag11", "tag12"]
 }}
 
 Reglas:
-- El título debe tener mucha energía, ser curioso, que dé ganas de clickear
-- Los hashtags van al final de la descripción con # (no como array separado)
-- Los tags del array son sin # y en minúsculas
-- Respondé SOLO con el JSON válido, sin texto extra antes ni después."""
+- Título con energía, curioso, que dé ganas de clickear
+- Las 4 variaciones deben ser distintas entre sí y del título principal
+- Hashtags al final de la descripción con #
+- Tags del array sin # y en minúsculas
+- Respondé SOLO con el JSON válido, sin texto extra."""
 
     try:
         cliente = anthropic.Anthropic(api_key=api_key)
@@ -188,6 +239,12 @@ Cuando ya tenés el video editado y listo para subir, pero necesitás el título
             placeholder="Ej: Compilación de los mejores goles de chilena de la historia del fútbol. Incluye goles de distintas ligas y momentos épicos de celebración.",
             height=120,
         )
+        angulo = st.text_input(
+            "Ángulo o promesa emocional del video (opcional)",
+            placeholder="Ej: estos perros demuestran que los animales sienten amor",
+            help="Si lo completás, el SEO reflejará este ángulo para diferenciarte de videos similares.",
+            key="seo_angulo",
+        )
 
     else:
         # Buscar video compilado disponible en sesión
@@ -201,6 +258,12 @@ Cuando ya tenés el video editado y listo para subir, pero necesitás el título
         descripcion_extra = st.text_input(
             "Contexto adicional (opcional)",
             placeholder="Ej: Es una compilación de goles épicos, quiero que el SEO apunte a fútbol latinoamericano"
+        )
+        angulo = st.text_input(
+            "Ángulo o promesa emocional del video (opcional)",
+            placeholder="Ej: estos perros demuestran que los animales sienten amor",
+            help="Si lo completás, el SEO reflejará este ángulo para diferenciarte de videos similares.",
+            key="seo_angulo",
         )
 
         if ruta_compilado:
@@ -320,7 +383,7 @@ Cuando ya tenés el video editado y listo para subir, pero necesitás el título
 
         spinner_msg = "Claude está viendo el video y generando el SEO..." if frames_b64 else "Claude está generando el SEO..."
         with st.spinner(spinner_msg):
-            resultado = generar_seo(descripcion, tipo, canal_handle, idioma, frames_b64)
+            resultado = generar_seo(descripcion, tipo, canal_handle, idioma, frames_b64, angulo=angulo)
 
         if "error" in resultado:
             st.error(resultado["error"])
@@ -351,6 +414,24 @@ Cuando ya tenés el video editado y listo para subir, pero necesitás el título
         chars = len(titulo_editado)
         color = "🟢" if chars <= 60 else "🟡" if chars <= 70 else "🔴"
         st.caption(f"{color} {chars}/70 caracteres")
+
+        # Variaciones de título
+        variaciones = resultado.get("variaciones", [])
+        if variaciones:
+            with st.expander("🔀 Variaciones de título alternativas", expanded=True):
+                for i, var in enumerate(variaciones):
+                    col_txt, col_btn = st.columns([5, 1])
+                    with col_txt:
+                        st.markdown(f"**{var.get('estilo', '')}**")
+                        v_titulo = var.get("titulo", "")
+                        v_chars = len(v_titulo)
+                        v_color = "🟢" if v_chars <= 60 else "🟡" if v_chars <= 70 else "🔴"
+                        st.caption(f"`{v_titulo}` — {v_color} {v_chars} chars")
+                    with col_btn:
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        if st.button("Usar", key=f"usar_var_{i}", use_container_width=True):
+                            st.session_state["seo_titulo_edit"] = v_titulo
+                            st.rerun()
 
         # Descripción
         st.markdown("---")
