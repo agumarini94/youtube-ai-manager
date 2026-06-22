@@ -161,7 +161,7 @@ def mostrar_paso1():
     with col1:
         nicho = st.selectbox("Nicho", options=list(nichos.keys()), key="p1_nicho")
     with col2:
-        termino_custom = st.text_input("O ingresá tu propio término", placeholder="Ej: gatos graciosos 2024", key="p1_termino")
+        termino_custom = st.text_input("O ingresá tu propio término", placeholder="Ej: goles épicos del Mundial 2026", key="p1_termino")
 
     # ── Filtros avanzados ─────────────────────────────────────
     with st.expander("⚙️ Filtros avanzados"):
@@ -322,7 +322,7 @@ def mostrar_paso2():
             tema = st.session_state.get("p2_tema_generado", "")
 
         elif modo == "Escribir tema manualmente":
-            tema = st.text_area("Describí el tema", placeholder="Ej: Compilación de los 10 gatos más graciosos de 2024", height=70, key="p2_tema_manual")
+            tema = st.text_area("Describí el tema", placeholder="Ej: Compilación de los 10 goles más épicos del Mundial 2026", height=70, key="p2_tema_manual")
 
         else:
             st.info("Claude analiza frames de tu video y genera el guión basándose en lo que ve.")
@@ -353,7 +353,7 @@ def mostrar_paso2():
     # Configuración
     col1, col2, col3 = st.columns(3)
     with col1:
-        tipo = st.selectbox("Tipo", ["Compilación viral", "Top 10 / Ranking", "Fails y momentos graciosos", "Momentos épicos", "Animales y mascotas"], key="p2_tipo")
+        tipo = st.selectbox("Tipo", ["Compilación de goles", "Top jugadores / Ranking", "Fails y bloopers deportivos", "Momentos épicos", "Mundial 2026"], key="p2_tipo")
     with col2:
         idioma = st.selectbox("Idioma", ["Español latino", "Español de España", "Inglés americano"], key="p2_idioma")
     with col3:

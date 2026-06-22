@@ -25,6 +25,9 @@ __pycache__/
 dist/
 build/
 
+# ── Música (archivos grandes, no van a GitHub) ────────────────────────────────
+music/
+
 # ── Archivos temporales del workflow ──────────────────────────────────────────
 ytbot_*/
 thumb_*/
@@ -32,6 +35,7 @@ tmp_*/
 *.mp4
 *.mp3
 *.wav
+*.webm
 *.jpg
 *.jpeg
 *.png

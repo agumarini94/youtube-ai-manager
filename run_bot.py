@@ -29,7 +29,7 @@ load_dotenv()
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram.ext import ContextTypes
-from modules.telegram_bot import crear_aplicacion, ejecutar_workflow_automatico
+from modules.telegram_bot import crear_aplicacion, ejecutar_workflow_automatico, verificar_y_programar_pronosticos
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -163,6 +163,18 @@ async def main():
         replace_existing=True,
     )
 
+    # Pronósticos automáticos: check diario a las 5:00 AM
+    # Determina la hora exacta del día y programa la publicación 8h antes del primer partido
+    scheduler.add_job(
+        verificar_y_programar_pronosticos,
+        trigger="cron",
+        hour=5,
+        minute=0,
+        args=[app.bot, scheduler],
+        id="check_pronosticos_diario",
+        replace_existing=True,
+    )
+
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
 
@@ -191,7 +203,8 @@ async def main():
     await app.updater.start_polling(drop_pending_updates=True)
 
     logging.info(
-        f"Bot iniciado. Workflow automático: lun-vie a las {HORA_AUTO:02d}:{MINUTO_AUTO:02d} (Argentina)"
+        f"Bot iniciado. Workflow: lun-vie {HORA_AUTO:02d}:{MINUTO_AUTO:02d} · "
+        f"Pronósticos auto: todos los días 05:00 (Argentina)"
     )
 
     # Notificar que el bot arrancó
@@ -200,8 +213,9 @@ async def main():
             chat_id=CHAT_ID,
             text=(
                 f"🟢 <b>Bot iniciado</b> — listo para recibir comandos.\n"
-                f"<i>Workflow automático: lun-vie {HORA_AUTO:02d}:{MINUTO_AUTO:02d} · "
-                f"Heartbeat: todos los días 09:00</i>"
+                f"<i>Workflow: lun-vie {HORA_AUTO:02d}:{MINUTO_AUTO:02d} · "
+                f"Pronósticos automáticos: todos los días 05:00 · "
+                f"Heartbeat: 09:00</i>"
             ),
             parse_mode="HTML",
         )

@@ -3,6 +3,7 @@ Gestión de música de fondo para compilaciones.
 Depositar archivos MP3/M4A en youtube_ai_manager/music/
 """
 import json
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -12,6 +13,9 @@ FFMPEG   = "/opt/homebrew/bin/ffmpeg"
 YT_DLP   = "/opt/homebrew/bin/yt-dlp"
 
 _EXTENSIONES = {".mp3", ".m4a", ".wav", ".aac", ".ogg", ".flac"}
+
+# Asegura que /opt/homebrew/bin esté en PATH para que yt-dlp encuentre Deno al resolver JS challenges
+_ENV = {**os.environ, "PATH": f"/opt/homebrew/bin:{os.environ.get('PATH', '')}"}
 
 
 def listar_tracks() -> list[dict]:
@@ -40,7 +44,7 @@ def buscar_canciones(nombre: str, n: int = 5) -> list[dict]:
                 "--no-warnings",
                 "--quiet",
             ],
-            capture_output=True, text=True, timeout=20,
+            capture_output=True, text=True, timeout=30, env=_ENV,
         )
         results = []
         for line in r.stdout.strip().splitlines():
@@ -79,7 +83,7 @@ def descargar_preview(url: str, segundos: int = 25) -> str | None:
         # Obtener URL directa del stream de audio (sin descargar)
         r = subprocess.run(
             [YT_DLP, "-f", "bestaudio", "-g", "--no-warnings", url],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, timeout=30, env=_ENV,
         )
         if r.returncode != 0:
             return None
@@ -97,7 +101,7 @@ def descargar_preview(url: str, segundos: int = 25) -> str | None:
                 "-c:a", "libmp3lame", "-b:a", "128k",
                 "-y", tmp,
             ],
-            capture_output=True, timeout=35,
+            capture_output=True, timeout=45, env=_ENV,
         )
         if r2.returncode == 0 and Path(tmp).exists() and Path(tmp).stat().st_size > 1_000:
             return tmp
@@ -123,9 +127,8 @@ def descargar_desde_url(url: str) -> dict | None:
                 "-o", str(MUSIC_DIR / "%(title)s.%(ext)s"),
                 "--no-playlist",
                 "--no-warnings",
-                "--quiet",
             ],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True, text=True, timeout=180, env=_ENV,
         )
         if r.returncode != 0:
             return None
@@ -147,6 +150,47 @@ def buscar_y_descargar(nombre: str) -> dict | None:
     if not results:
         return None
     return descargar_desde_url(results[0]["url"])
+
+
+def sugerir_musica_claude(contexto: str) -> dict | None:
+    """
+    Claude sugiere una canción apropiada para el video de fútbol.
+    contexto: descripción del tipo de video (categoría, tema, formato).
+    Retorna {busqueda, razon} o None si falla.
+    """
+    import anthropic as _anthropic
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        return None
+
+    prompt = (
+        f"Sos un editor de videos de fútbol que elige música para YouTube Shorts. "
+        f"Elegí UNA canción específica que pegue perfecto para este video:\n\n"
+        f"CONTEXTO: {contexto}\n\n"
+        f"REGLAS:\n"
+        f"• Para compilaciones de goles/highlights épicos → trap, phonk, hip-hop energético\n"
+        f"• Para datos curiosos / texto → lo-fi hip-hop, instrumental suave\n"
+        f"• Para debate / pregunta viral → beat trap medio, no muy invasivo\n"
+        f"• Para historias de hinchas → música emotiva, himno de fútbol o balada\n"
+        f"• Para ¿Cuál elegís? → hip-hop animado, pop\n"
+        f"• Preferí música sin copyright (lo-fi, NCS, royalty-free) cuando sea posible\n"
+        f"• También vale música famosa de fútbol (We Are The Champions, 7 Nation Army, etc.)\n\n"
+        f"Respondé SOLO con JSON válido (sin markdown):\n"
+        f'{{ "busqueda": "nombre + artista exacto para buscar en YouTube", '
+        f'"razon": "por qué esta canción (máx 12 palabras)" }}'
+    )
+
+    try:
+        client = _anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=150,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        import json as _json
+        return _json.loads(resp.content[0].text.strip())
+    except Exception:
+        return None
 
 
 def mezclar_musica(video: str, musica: str, salida: str, volumen: float = 0.15) -> bool:

@@ -14,7 +14,7 @@ import anthropic
 import pytz
 
 from modules.selector_ia import descargar_clips, guardar_en_historial
-from modules.compilador import concatenar_clips
+from modules.compilador import concatenar_clips, agregar_overlay_suscripcion
 from modules.seo_gen import generar_seo, extraer_frames_thumbnail, generar_capitulos
 
 _TZ_ARG = pytz.timezone("America/Argentina/Buenos_Aires")
@@ -158,7 +158,7 @@ def compilar_y_generar_seo(clips: list[dict], formato: str = "video", progress_c
             progress_cb(txt)
 
     dual = (formato == "ambos")
-    total = (6 if dual else 5) + (1 if musica else 0)
+    total = (6 if dual else 5) + (1 if musica else 0) + 1  # +1 overlay suscripción
     paso = 1
 
     carpeta_tmp = tempfile.mkdtemp(prefix="ytbot_")
@@ -191,17 +191,34 @@ def compilar_y_generar_seo(clips: list[dict], formato: str = "video", progress_c
         if ok_h and Path(salida_h).exists():
             video_horizontal = salida_h
 
-    # Teaser hook: Claude encuentra el momento más impactante y lo pone al inicio
-    notify(f"⚡ <b>Paso {paso}/{total} — Claude buscando el mejor hook para los primeros 5 segundos...</b>")
+    # Teaser hook: Claude encuentra el momento más impactante y lo pone al inicio.
+    # Solo para videos largos — en Shorts/Reels no se aplica porque agregar 5s extra
+    # puede superar el límite de 60s y YouTube deja de clasificarlo como Short.
+    if not dual and formato not in ("reel", "ambos"):
+        notify(f"⚡ <b>Paso {paso}/{total} — Claude buscando el mejor hook para los primeros 5 segundos...</b>")
+        paso += 1
+        try:
+            hook_ts = _encontrar_momento_hook(salida)
+            if hook_ts and hook_ts > 5:
+                salida_con_hook = _aplicar_hook(salida, hook_ts, carpeta_tmp)
+                if salida_con_hook != salida:
+                    salida = salida_con_hook
+        except Exception:
+            pass
+    else:
+        paso += 1  # mantener el conteo de pasos
+
+    notify(f"🔔 <b>Paso {paso}/{total} — Agregando campanita de suscripción...</b>")
     paso += 1
-    try:
-        hook_ts = _encontrar_momento_hook(salida)
-        if hook_ts and hook_ts > 5:
-            salida_con_hook = _aplicar_hook(salida, hook_ts, carpeta_tmp)
-            if salida_con_hook != salida:
-                salida = salida_con_hook
-    except Exception:
-        pass
+    salida_ov = os.path.join(carpeta_tmp, "compilacion_con_overlay.mp4")
+    ok_ov, _ = agregar_overlay_suscripcion(salida, salida_ov)
+    if ok_ov:
+        salida = salida_ov
+    if video_horizontal:
+        salida_h_ov = os.path.join(carpeta_tmp, "compilacion_horizontal_overlay.mp4")
+        ok_h_ov, _ = agregar_overlay_suscripcion(video_horizontal, salida_h_ov)
+        if ok_h_ov:
+            video_horizontal = salida_h_ov
 
     if musica and Path(musica).exists():
         from modules.music_manager import mezclar_musica
@@ -232,13 +249,16 @@ def compilar_y_generar_seo(clips: list[dict], formato: str = "video", progress_c
         idioma="Español",
         frames_b64=frames if frames else None,
         formato=formato,
+        clips=descargados,
     )
 
     guardar_en_historial([c["id"] for c in descargados])
 
-    capitulos = generar_capitulos(descargados)
-    if capitulos and "descripcion" in seo:
-        seo["descripcion"] += f"\n\n📌 CAPÍTULOS\n{capitulos}"
+    # Capítulos solo para videos largos — en reels/shorts no tiene sentido (duran <60s)
+    if formato not in ("reel", "ambos"):
+        capitulos = generar_capitulos(descargados)
+        if capitulos and "descripcion" in seo:
+            seo["descripcion"] += f"\n\n📌 CAPÍTULOS\n{capitulos}"
 
     thumbnail = None
     try:
@@ -386,6 +406,7 @@ def subir_a_youtube(ruta_video: str, seo: dict, fecha_publicacion: str | None = 
     try:
         scopes = [
             "https://www.googleapis.com/auth/youtube.upload",
+            "https://www.googleapis.com/auth/youtube.force-ssl",
             "https://www.googleapis.com/auth/youtube.readonly",
         ]
         creds = Credentials.from_authorized_user_file(str(token_file), scopes)
@@ -446,6 +467,54 @@ def subir_a_youtube(ruta_video: str, seo: dict, fecha_publicacion: str | None = 
         raise
     except Exception as e:
         raise RuntimeError(str(e)) from e
+
+
+def postear_comentario_encuesta(video_id: str, encuesta: dict) -> bool:
+    """
+    Postea la encuesta como comentario en el video recién subido.
+    Retorna True si se posteó correctamente.
+    """
+    from modules.seo_gen import _formatear_comentario_encuesta
+    texto = _formatear_comentario_encuesta(encuesta)
+    if not texto:
+        return False
+    try:
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request
+        from googleapiclient.discovery import build
+    except ImportError:
+        return False
+
+    token_file = Path(__file__).parent.parent / "token_youtube.json"
+    if not token_file.exists():
+        return False
+    try:
+        scopes = [
+            "https://www.googleapis.com/auth/youtube.upload",
+            "https://www.googleapis.com/auth/youtube.readonly",
+            "https://www.googleapis.com/auth/youtube.force-ssl",
+        ]
+        creds = Credentials.from_authorized_user_file(str(token_file), scopes)
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            with open(token_file, "w") as f:
+                f.write(creds.to_json())
+        youtube = build("youtube", "v3", credentials=creds)
+        youtube.commentThreads().insert(
+            part="snippet",
+            body={
+                "snippet": {
+                    "videoId": video_id,
+                    "topLevelComment": {
+                        "snippet": {"textOriginal": texto}
+                    }
+                }
+            }
+        ).execute()
+        return True
+    except Exception as e:
+        print(f"[encuesta] Error posteando comentario: {e}")
+        return False
 
 
 def _comprimir_preview(entrada: str, salida: str, max_mb: int = 45) -> bool:

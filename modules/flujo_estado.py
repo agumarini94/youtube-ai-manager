@@ -3,10 +3,12 @@ State machine persistida en JSON para el workflow de automatización.
 Permite que el bot retome el estado si se reinicia.
 """
 import json
+import threading
 from datetime import datetime
 from pathlib import Path
 
 _FILE = Path(__file__).parent.parent / "data" / "flujo_estado.json"
+_lock = threading.RLock()  # RLock: la misma thread puede re-adquirirlo (evita deadlock en actualizar)
 
 
 def _inicial() -> dict:
@@ -33,7 +35,7 @@ def _inicial() -> dict:
     }
 
 
-def leer() -> dict:
+def _leer() -> dict:
     if _FILE.exists():
         try:
             with open(_FILE) as f:
@@ -43,11 +45,23 @@ def leer() -> dict:
     return _inicial()
 
 
-def guardar(datos: dict):
+def _guardar(datos: dict):
     _FILE.parent.mkdir(exist_ok=True)
     datos["timestamp"] = datetime.now().isoformat()
-    with open(_FILE, "w") as f:
+    tmp = _FILE.with_suffix(".tmp")
+    with open(tmp, "w") as f:
         json.dump(datos, f, ensure_ascii=False, indent=2)
+    tmp.replace(_FILE)  # escritura atómica: evita archivo corrupto si el proceso muere a mitad
+
+
+def leer() -> dict:
+    with _lock:
+        return _leer()
+
+
+def guardar(datos: dict):
+    with _lock:
+        _guardar(datos)
 
 
 def reset():
@@ -55,6 +69,7 @@ def reset():
 
 
 def actualizar(**kwargs):
-    datos = leer()
-    datos.update(kwargs)
-    guardar(datos)
+    with _lock:  # read-modify-write atómico: ninguna otra coroutine puede intervenir en el medio
+        datos = _leer()
+        datos.update(kwargs)
+        _guardar(datos)

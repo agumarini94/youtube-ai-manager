@@ -185,7 +185,7 @@ def mostrar_video_manager():
             ],
         )
     with col_f4:
-        busqueda = st.text_input("🔍 Buscar en título", placeholder="ej: animales, fails...")
+        busqueda = st.text_input("🔍 Buscar en título", placeholder="ej: goles, Mundial, atajadas...")
 
     if st.button("🔄 Recargar lista desde YouTube"):
         del st.session_state["vm_videos"]

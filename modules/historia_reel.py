@@ -1,10 +1,10 @@
 """
-Módulo — Reel de Historia de Atención al Público
+Módulo — Reel de Historia de Hincha de Fútbol
 Video con pregunta abierta + historia en lunfardo en la descripción de YouTube.
 
 Flujo:
-  1. Claude genera historia (lunfardo, primera persona) + pregunta abierta + términos imagen.
-  2. Imágenes de Pexels/Pixabay del setting laboral elegido.
+  1. Claude genera historia de hincha (lunfardo, primera persona) + pregunta abierta + términos imagen.
+  2. Imágenes de Pexels/Pixabay del contexto futbolero elegido.
   3. Video: imágenes con pregunta abierta superpuesta + tarjeta final CTA.
   4. Descripción YouTube: historia completa (el contenido real).
 """
@@ -39,53 +39,53 @@ _XFADE_DUR = 0.8  # debe coincidir con imagen_reel
 # ── Settings disponibles ───────────────────────────────────────────────────────
 
 SETTINGS: dict[str, dict] = {
-    "🛒 Supermercado":  {
-        "label_es": "supermercado",
-        "terminos": ["supermarket cashier angry customer", "grocery store checkout line",
-                     "retail worker frustrated", "shopping cart supermarket queue",
-                     "cashier register people", "supermarket customer complaint"],
+    "🏟️ Hincha en el estadio": {
+        "label_es": "hincha en el estadio",
+        "terminos": ["football fans stadium crowd cheering", "soccer supporters tribuna",
+                     "stadium atmosphere match day", "football fan celebration goal",
+                     "soccer crowd stadium noise", "football supporters scarves flags"],
     },
-    "💊 Farmacia": {
-        "label_es": "farmacia",
-        "terminos": ["pharmacy counter customer", "drugstore worker service",
-                     "pharmacist customer interaction", "pharmacy waiting line",
-                     "medicine store counter", "pharmacy retail worker"],
+    "✈️ Hincha visitante": {
+        "label_es": "hincha visitante",
+        "terminos": ["away fans football travel", "soccer supporter away match",
+                     "football fans bus journey", "away supporters football stadium",
+                     "visiting fans soccer match", "football fan road trip"],
     },
-    "🏦 Banco": {
-        "label_es": "banco",
-        "terminos": ["bank teller customer angry", "bank queue waiting people",
-                     "bank counter service", "bank employee frustrated",
-                     "banking customer complaint", "bank office interior"],
+    "⚽ Fútbol de barrio / potrero": {
+        "label_es": "fútbol de barrio y los potreros",
+        "terminos": ["street soccer kids playing", "neighborhood football game",
+                     "kids playing football street", "informal soccer game grass field",
+                     "children football match park", "street soccer ball dribbling"],
     },
-    "🍔 Fast food / Resto": {
-        "label_es": "fast food o restaurante",
-        "terminos": ["fast food worker customer", "restaurant angry customer",
-                     "food service employee", "restaurant complaint scene",
-                     "burger joint counter", "food court customer service"],
+    "📺 Ver el Mundial en casa": {
+        "label_es": "ver el Mundial en casa o en un bar",
+        "terminos": ["friends watching world cup tv", "bar football world cup crowd",
+                     "family watching soccer tv together", "world cup watch party friends",
+                     "people celebrating goal tv", "football fans watching match bar"],
     },
-    "📞 Call center": {
-        "label_es": "call center",
-        "terminos": ["call center worker headset", "customer service phone operator",
-                     "office worker stressed phone", "call center employees",
-                     "helpdesk support agent", "phone customer service"],
+    "👦 Jugador de fútbol amateur": {
+        "label_es": "jugador de fútbol amateur o de liga",
+        "terminos": ["amateur soccer player match", "local football league players",
+                     "recreational soccer game adults", "sunday league football players",
+                     "amateur football team celebration", "local soccer match players"],
     },
-    "✈️ Aeropuerto / Hotel": {
-        "label_es": "aeropuerto u hotel",
-        "terminos": ["airport check-in counter", "hotel reception desk customer",
-                     "airline worker passenger", "hotel lobby customer complaint",
-                     "reception desk service", "airport gate agent"],
+    "🥅 Ser arquero": {
+        "label_es": "ser arquero de fútbol",
+        "terminos": ["goalkeeper football save spectacular", "soccer goalie diving save",
+                     "football goalkeeper gloves ready", "keeper penalty shootout",
+                     "goalie football match diving", "soccer goalkeeper save reaction"],
     },
-    "🏥 Salud / Consultorio": {
-        "label_es": "consultorio o clínica",
-        "terminos": ["medical receptionist patient", "clinic waiting room",
-                     "hospital reception desk", "doctor office angry patient",
-                     "healthcare worker service", "medical office counter"],
+    "🎙️ Discutir de fútbol": {
+        "label_es": "discutir de fútbol con amigos o familia",
+        "terminos": ["friends arguing sports bar", "football debate friends passionate",
+                     "soccer fans arguing pub", "sports debate passionate people",
+                     "friends discussing football tv", "football argument fans"],
     },
-    "🏪 Otro comercio": {
-        "label_es": "un comercio",
-        "terminos": ["retail store customer complaint", "shop worker service",
-                     "store counter customer angry", "retail employee frustrated",
-                     "shopping customer interaction", "store clerk counter"],
+    "🏆 Ver una final histórica": {
+        "label_es": "ver una final histórica del fútbol",
+        "terminos": ["football final match stadium", "world cup final celebration fans",
+                     "soccer championship final crowd", "historic football match fans",
+                     "championship trophy celebration", "football final penalty shootout"],
     },
 }
 
@@ -101,28 +101,28 @@ def generar_historia_claude(setting_label: str) -> dict:
     if not api_key:
         raise ValueError("Falta ANTHROPIC_API_KEY en .env")
 
-    prompt = f"""Laburaste años en {setting_label}. Estás contando UNA historia específica en los comentarios de YouTube — no una reflexión general, un episodio concreto que te pasó y que todavía te da algo de bronca o de risa.
+    prompt = f"""Sos hincha de fútbol y estás contando UNA historia específica en los comentarios de YouTube sobre {setting_label} — no una reflexión general, un episodio concreto que te pasó y que todavía te da bronca, emoción o te saca una sonrisa.
 
 HOOK OBLIGATORIO (primera oración):
-Arrancá IN MEDIAS RES, en el momento más tenso o absurdo. Sin setup, sin "resulta que". Que quien lee no pueda parar.
+Arrancá IN MEDIAS RES, en el momento más tenso o emocionante. Sin setup, sin "resulta que". Que quien lee no pueda parar.
 Hooks que funcionan:
-- "Ese día le dije 'sí señor' mientras pensaba en cómo renunciar."
-- "La clienta quería devolver algo que había usado tres meses."
-- "Me pidió hablar con el gerente. Yo era el gerente."
+- "Ese gol lo grité solo en el colectivo de vuelta a casa."
+- "El árbitro anuló el gol y pensé que me iba a agarrar algo."
+- "Estaba rodeado de hinchas del otro equipo y el mío metió el tercero."
 
 ESTRUCTURA (4 párrafos cortos):
-1. GANCHO: el momento cumbre, sin preámbulo. In medias res.
-2. CONTEXTO: quién era este cliente (tipo específico, no "una persona"), qué día, qué ambiente
-3. ESCALADA: cómo empeoró. Qué dijiste en voz alta vs qué pensabas. Lo que no podías decir.
-4. CIERRE: remate con ironía, resignación digna o justicia poética discreta. Sin moraleja.
+1. GANCHO: el momento cumbre del episodio, sin preámbulo. In medias res.
+2. CONTEXTO: qué partido, qué momento de la temporada/carrera, cómo llegaste a esa situación.
+3. ESCALADA: cómo fue desarrollándose. Qué sentías, qué decías, lo que pensabas pero no decías.
+4. CIERRE: remate con ironía, emoción genuina o una vuelta de tuerca. Sin moraleja.
 
-Terminá con: "Si laburaste en {setting_label} sabés exactamente de qué hablo. Contame la tuya 👇"
+Terminá con: "Si sos de {setting_label} sabés exactamente de qué hablo. Contame la tuya 👇"
 
 TONO:
-- Adulto, cínico con humor seco, resignado pero con chispa
-- Como contándoselo a un amigo en un bar a las 23hs
-- Detalles específicos: "el tipo con ropa cara que quería que le cambiemos la política", no "el cliente difícil"
-- Lunfardo adulto natural: "tipo raro", "la mina", "se puso en personaje", "a esta altura ya nada te sorprende", "qué bajón de existencia"
+- Hincha apasionado, con humor rioplatense y algo de nostalgia o adrenalina
+- Como contándoselo a un amigo en un bar mirando el partido
+- Detalles específicos: nombres de jugadores reales, estadios concretos, partidos reconocibles
+- Lunfardo natural: "la puta que lo parió", "una locura", "se prendió fuego la cancha", "me temblaban las piernas"
 - 2-3 errores ortográficos naturales (q, sin tilde) — ni más, ni en cada oración
 
 PROHIBIDO:
@@ -134,12 +134,12 @@ PROHIBIDO:
 ❌ Más de 270 palabras
 
 PREGUNTA PARA EL VIDEO:
-Tiene que surgir de la historia — no genérica. Si la historia es sobre un cliente que pedía excepciones, no "¿Cuál fue tu peor cliente?" sino "¿Hasta dónde aguantarías antes de responder mal?"
-Máx 42 caracteres. Cuanto más corta y directa, más impacto. Que quien laburó en ese lugar NECESITE responder.
+Tiene que surgir de la historia — no genérica. Si la historia es sobre aguantar rodeado de rivales, no "¿Fuiste de visitante?" sino "¿Alguna vez tuviste que festejar un gol sin hacer ruido?"
+Máx 42 caracteres. Cuanto más corta y directa, más impacto.
 
 TÍTULO DEL VIDEO:
 Específico a esta historia. Crea curiosidad sin spoilear el remate.
-Formatos: "Lo que le respondí me costó casi el trabajo" / "3 años en caja y esto todavía me molesta" / "El cliente más [adjetivo] que atendí en mi vida"
+Formatos: "Lo que viví en esa cancha no lo olvido más" / "Fui de visitante y casi no la cuento" / "El partido que me partió el corazón"
 Máx 60 caracteres.
 
 Respondé SOLO con JSON válido (sin markdown):
@@ -147,7 +147,7 @@ Respondé SOLO con JSON válido (sin markdown):
   "historia": "...texto completo...",
   "pregunta_video": "¿...?",
   "titulo": "titulo especifico de esta historia",
-  "hashtags": ["#Shorts", "#fyp", "#parati", "#trabajo", "#atencionalpublico", "#argentina", "#storytime"]
+  "hashtags": ["#Shorts", "#fyp", "#parati", "#futbol", "#hincha", "#argentina", "#storytime"]
 }}"""
 
     client = anthropic.Anthropic(api_key=api_key)

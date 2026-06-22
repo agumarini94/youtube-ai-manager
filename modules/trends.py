@@ -13,26 +13,26 @@ from datetime import datetime, timedelta
 
 # Nichos para YouTube
 NICHOS_YOUTUBE = {
-    "Videos Virales": "videos virales 2024",
-    "Compilaciones Fails": "fails compilation 2024",
-    "Animales Graciosos": "animales graciosos compilacion",
-    "Momentos Épicos": "epic moments compilation",
-    "Reacciones": "reacciones graciosas compilacion",
-    "Deportes Increíbles": "deportes momentos increibles",
-    "Tecnología Viral": "tecnologia viral trending",
-    "Humor Latino": "humor latino viral 2024",
+    "⚽ Goles épicos": "goles epicos futbol compilation 2026",
+    "🏆 Mundial 2026": "world cup 2026 highlights goals",
+    "🌟 Mejores jugadas": "mejores jugadas futbol 2026",
+    "😂 Fails de fútbol": "football fails compilation 2026",
+    "🥅 Atajadas increíbles": "best goalkeeper saves compilation",
+    "🇦🇷 Selección Argentina": "argentina seleccion futbol 2026",
+    "🔥 Champions League": "champions league goals highlights 2026",
+    "👦 Jóvenes talentos": "young football talents skills 2026",
 }
 
 # Nichos para TikTok
 NICHOS_TIKTOK = {
-    "Videos Virales": "videos virales",
-    "Fails Graciosos": "fails graciosos",
-    "Animales": "animales graciosos",
-    "Humor Latino": "humor latino",
-    "Momentos Épicos": "momentos epicos",
-    "Deportes": "deportes increibles",
-    "Tendencias": "trending viral",
-    "Bailes y Challenges": "challenge viral",
+    "⚽ Goles virales": "goles futbol",
+    "🌍 Mundial 2026": "mundial 2026",
+    "🌟 Cracks y habilidades": "cracks futbol habilidades",
+    "😂 Fails de fútbol": "futbolfails",
+    "🥅 Atajadas": "atajadas futbol",
+    "🇦🇷 Fútbol argentino": "futbol argentino",
+    "🔥 Highlights": "football highlights",
+    "💥 Momentos épicos": "momentos epicos futbol",
 }
 
 # Opciones de antigüedad del video
@@ -235,31 +235,32 @@ def rankear_con_ia(videos: list, nicho: str, plataforma: str) -> str:
         for i, v in enumerate(videos[:15])
     ])
 
-    prompt = f"""Eres un experto en contenido viral de {plataforma}. Analiza estos videos del nicho "{nicho}" y determina cuáles tienen más potencial para inspirar contenido viral.
+    prompt = f"""Sos un experto en contenido viral de fútbol para {plataforma}. El canal es "viralesDelFutbol" — publica compilaciones, datos curiosos, debates y reels de fútbol para audiencia hispanohablante (principalmente Argentina y LATAM).
 
 PLATAFORMA: {plataforma}
+NICHO ANALIZADO: {nicho}
 VIDEOS ENCONTRADOS:
 {lista_videos}
 
-Proporciona un análisis en español con estas secciones:
+Analizá estos videos y respondé en español con estas secciones:
 
-1. **Top 3 temas con mayor potencial viral**
-   - Para cada uno: por qué funciona, qué lo hace viral, cómo replicar el formato
+1. **Top 3 temas con mayor potencial viral para fútbol**
+   - Por qué funciona, qué lo hace viral, cómo replicar el formato en un canal de compilaciones
 
 2. **Patrones detectados**
    - Palabras clave recurrentes en los títulos
-   - Tipo de contenido que domina
+   - Tipo de contenido que domina (goles, fails, highlights, debates)
    - Duración ideal detectada
 
-3. **Ideas para tu canal**
-   - 3 ideas concretas de videos basadas en estos datos
-   - Título sugerido para cada idea
-   - Por qué funcionaría en tu nicho
+3. **Ideas concretas para viralesDelFutbol**
+   - 3 ideas de videos basadas en estos datos (con contexto del Mundial 2026 si aplica)
+   - Título sugerido para cada idea (máx 60 chars, con emoji)
+   - Por qué funcionaría ahora en el canal
 
-4. **Palabras clave SEO recomendadas**
-   - 8-10 keywords para usar en títulos y descripciones
+4. **Keywords SEO recomendadas**
+   - 8-10 keywords de fútbol para usar en títulos y descripciones
 
-Sé específico y práctico. El objetivo es crear contenido viral de compilaciones."""
+Sé específico y práctico. Considerá que el Mundial 2026 empieza el 11 de junio — es una oportunidad de tráfico masivo."""
 
     try:
         cliente = anthropic.Anthropic(api_key=api_key)
@@ -275,8 +276,8 @@ Sé específico y práctico. El objetivo es crear contenido viral de compilacion
 
 def mostrar_tendencias():
     """Renderiza la interfaz del Buscador de Tendencias en Streamlit."""
-    st.title("🔥 Buscador de Tendencias Virales")
-    st.markdown("Busca videos trending en YouTube o TikTok con filtros avanzados.")
+    st.title("⚽ Buscador de Tendencias de Fútbol")
+    st.markdown("Buscá los videos de fútbol más virales en YouTube o TikTok para inspirar el próximo contenido del canal.")
 
     with st.expander("❓ ¿Cómo usar este módulo?"):
         st.markdown("""
@@ -313,7 +314,7 @@ Busca los videos más vistos en YouTube o TikTok por nicho, con filtros avanzado
     with col2:
         termino_personalizado = st.text_input(
             "O ingresa un término personalizado (opcional)",
-            placeholder="Ej: gatos graciosos 2024",
+            placeholder="Ej: goles increíbles 2026, fails de arqueros",
         )
 
     # ── Filtros avanzados ─────────────────────────────────────

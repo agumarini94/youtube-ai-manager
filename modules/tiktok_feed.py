@@ -12,36 +12,31 @@ import tempfile
 import time
 import hashlib
 from pathlib import Path
+from modules.selector_ia import SUBCATEGORIAS, SUB_SUBCATEGORIAS, sub_tag, _buscar_keywords
 
 
 TIKWM_API = "https://www.tikwm.com/api/"
 
 LINKS_BUSQUEDA = {
-    # ── Fails y humor (nicho principal) ──────────────────────────────────────
-    "🔥 Tendencias generales": "https://www.tiktok.com/explore",
-    "😂 Fails y humor": "https://www.tiktok.com/tag/fails",
-    "🤣 Fails graciosos": "https://www.tiktok.com/tag/failsgraciosos",
-    "💥 Caídas y tropiezos": "https://www.tiktok.com/tag/caidas",
-    "🏅 Fails deportivos": "https://www.tiktok.com/tag/sportsfails",
-    "🎬 TikTok fails": "https://www.tiktok.com/tag/tiktokfails",
-    "😬 Momentos cringe": "https://www.tiktok.com/tag/cringe",
-    "🎭 Humor cotidiano": "https://www.tiktok.com/tag/humor",
-    "🤡 Bromas y pranks": "https://www.tiktok.com/tag/prank",
-    "🧒 Kids fails": "https://www.tiktok.com/tag/kidsfails",
-    "👴 Abuelos graciosos": "https://www.tiktok.com/tag/abuelosgraciosos",
-    "🐶 Animales y fails": "https://www.tiktok.com/tag/animalfails",
-    "🎉 Fails en fiestas": "https://www.tiktok.com/tag/partyfails",
-    "🏠 Fails en casa": "https://www.tiktok.com/tag/homefails",
-    "😅 Momentos de vergüenza": "https://www.tiktok.com/tag/embarrassing",
-    "🤦 Expectativa vs realidad": "https://www.tiktok.com/tag/expectativavsrealidad",
-    "🎪 Compilaciones virales": "https://www.tiktok.com/tag/compilacion",
-    # ── Otros nichos ─────────────────────────────────────────────────────────
-    "🐾 Animales": "https://www.tiktok.com/tag/animalesgraciosos",
-    "⚽ Deportes": "https://www.tiktok.com/tag/deportes",
-    "🎵 Bailes y challenges": "https://www.tiktok.com/tag/challenge",
-    "😱 Momentos épicos": "https://www.tiktok.com/tag/momentosepicos",
-    "🍕 Comida": "https://www.tiktok.com/tag/comidaviral",
-    "🏋️ Fitness": "https://www.tiktok.com/tag/gym",
+    # ── Fútbol (nicho principal) ──────────────────────────────────────────────
+    "🔥 Tendencias fútbol":       "https://www.tiktok.com/explore",
+    "⚽ Goles épicos":            "https://www.tiktok.com/tag/goles",
+    "🏆 Mundial 2026":           "https://www.tiktok.com/tag/mundial2026",
+    "🌟 Jugadas de crack":        "https://www.tiktok.com/tag/cracks",
+    "😂 Fails de fútbol":         "https://www.tiktok.com/tag/futbolfails",
+    "🥅 Atajadas increíbles":     "https://www.tiktok.com/tag/atajadas",
+    "🇦🇷 Fútbol argentino":      "https://www.tiktok.com/tag/futbolargentino",
+    "🔥 Highlights":              "https://www.tiktok.com/tag/footballhighlights",
+    "⚡ Fútbol callejero":        "https://www.tiktok.com/tag/freestylesoccer",
+    "💥 Momentos épicos":         "https://www.tiktok.com/tag/futbolmoments",
+    "🤣 Reacciones de hinchas":   "https://www.tiktok.com/tag/fansreactions",
+    "🏅 Champions League":        "https://www.tiktok.com/tag/championsleague",
+    "👦 Jóvenes talentos":        "https://www.tiktok.com/tag/youngtalents",
+    "🎯 Penales":                 "https://www.tiktok.com/tag/penales",
+    "🇧🇷 Fútbol brasileño":      "https://www.tiktok.com/tag/futbolbrasil",
+    "🏟️ Ambiente de estadio":    "https://www.tiktok.com/tag/estadio",
+    "🌍 Selecciones del mundo":   "https://www.tiktok.com/tag/selecciones",
+    "💪 Entrenamiento":           "https://www.tiktok.com/tag/futboltraining",
 }
 
 
@@ -300,16 +295,198 @@ def _compilar_video_largo(clips: list[dict], ancho: int, alto: int, barra) -> st
     return salida_final if Path(salida_final).exists() else None
 
 
+_BROADCASTERS = {
+    "espn", "fox", "beinsports", "dazn", "fifacom", "goal", "marca",
+    "mundodeportivo", "sport", "as_", "tycsports", "tntsports", "skysports",
+    "bbcsport", "canalplus", "eurosport", "telemundo", "univision",
+    "infobae", "clarin", "lanacion", "olé", "ole_com",
+}
+
+
+def _mostrar_versus():
+    st.markdown(
+        "Buscá contenido de **dos temas distintos** y el bot los mezcla alternados: "
+        "A, B, A, B... listo para compilar. Ideal para comparativas (2026 vs 2022, "
+        "Argentina vs Brasil, goles vs fails, etc.)."
+    )
+    st.markdown("---")
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("### 🔵 Lado A")
+        term_a = st.text_input("Búsqueda Lado A", value="mundial 2026 goles", key="vs_term_a",
+                               placeholder="ej: mundial 2026 goles")
+    with col_b:
+        st.markdown("### 🔴 Lado B")
+        term_b = st.text_input("Búsqueda Lado B", value="mundial 2022 goles", key="vs_term_b",
+                               placeholder="ej: mundial 2022 goles")
+
+    col_n, col_btn = st.columns([2, 1])
+    with col_n:
+        n_por_lado = st.slider("Videos por lado", 2, 8, 4, key="vs_n_por_lado",
+                               help="Total de videos = Lado A + Lado B")
+    with col_btn:
+        st.markdown("<br>", unsafe_allow_html=True)
+        buscar_vs = st.button("🔍 Buscar y mezclar", type="primary",
+                              use_container_width=True, key="vs_buscar")
+
+    if buscar_vs:
+        if not term_a.strip() or not term_b.strip():
+            st.warning("⚠️ Completá los dos términos de búsqueda.")
+        else:
+            col_prog_a, col_prog_b = st.columns(2)
+            with col_prog_a:
+                with st.spinner(f"Buscando '{term_a}'..."):
+                    crudos_a = _buscar_keywords(term_a.strip(), cantidad=n_por_lado * 4)
+            with col_prog_b:
+                with st.spinner(f"Buscando '{term_b}'..."):
+                    crudos_b = _buscar_keywords(term_b.strip(), cantidad=n_por_lado * 4)
+
+            # Tomar los mejores de cada lado (por vistas) y alternar A, B, A, B...
+            top_a = sorted(crudos_a, key=lambda x: x.get("vistas", 0), reverse=True)[:n_por_lado]
+            top_b = sorted(crudos_b, key=lambda x: x.get("vistas", 0), reverse=True)[:n_por_lado]
+            mezclados = [v for par in zip(top_a, top_b) for v in par]
+            # Si un lado tiene más que el otro, agregar los sobrantes al final
+            n_min = min(len(top_a), len(top_b))
+            mezclados += top_a[n_min:] + top_b[n_min:]
+
+            if mezclados:
+                st.session_state["vs_videos"] = mezclados
+                st.session_state["vs_term_a_label"] = term_a.strip()
+                st.session_state["vs_term_b_label"] = term_b.strip()
+                st.rerun()
+            else:
+                st.error("❌ No se encontraron videos para uno o ambos términos. Probá con otras palabras.")
+
+    vs_videos = st.session_state.get("vs_videos", [])
+    if not vs_videos:
+        return
+
+    term_a_lbl = st.session_state.get("vs_term_a_label", "Lado A")
+    term_b_lbl = st.session_state.get("vs_term_b_label", "Lado B")
+
+    st.markdown("---")
+    st.success(f"✅ {len(vs_videos)} videos mezclados — alternando **{term_a_lbl}** y **{term_b_lbl}**")
+
+    COLS = 3
+    for i in range(0, len(vs_videos), COLS):
+        fila = vs_videos[i:i + COLS]
+        cols = st.columns(COLS)
+        for j, video in enumerate(fila):
+            with cols[j]:
+                pos_global = i + j
+                lado = "🔵 A" if pos_global % 2 == 0 else "🔴 B"
+                st.markdown(f"**{lado}**")
+                if video["thumbnail"]:
+                    st.image(video["thumbnail"], use_container_width=True)
+                titulo = video["titulo"]
+                st.markdown(f"**{titulo[:55]}{'...' if len(titulo) > 55 else ''}**")
+                st.caption(
+                    f"@{video['canal']} · 👁 {fmt_vistas(video['vistas'])} · ⏱ {fmt_duracion(video['duracion'])}"
+                )
+        st.markdown("")
+
+    st.markdown("---")
+    col_dl_vs, col_new_vs = st.columns(2)
+
+    with col_dl_vs:
+        if st.button("⬇️ Descargar todos y armar compilación",
+                     type="primary", use_container_width=True, key="vs_descargar"):
+            if "feed_carpeta" not in st.session_state:
+                st.session_state["feed_carpeta"] = tempfile.mkdtemp()
+            carpeta = st.session_state["feed_carpeta"]
+
+            descargados = []
+            barra = st.progress(0, text="Descargando videos versus...")
+            for i, video in enumerate(vs_videos):
+                barra.progress(i / len(vs_videos), text=f"Descargando {i+1}/{len(vs_videos)}...")
+                ruta = descargar_tiktok(video, carpeta)
+                if ruta:
+                    descargados.append({
+                        "ruta": ruta,
+                        "nombre": Path(ruta).name,
+                        "titulo": video["titulo"],
+                        "canal": video["canal"],
+                        "duracion": float(video["duracion"]),
+                    })
+            barra.progress(1.0, text="✅ Listo")
+
+            if descargados:
+                st.session_state["feed_descargados"] = descargados
+                st.session_state["compilador_clips"] = descargados
+                st.success(f"✅ {len(descargados)} videos listos. Ir al **Compilador** para unirlos.")
+                st.rerun()
+            else:
+                st.error("❌ No se pudo descargar ningún video.")
+
+    with col_new_vs:
+        if st.button("🔄 Nueva búsqueda versus", use_container_width=True, key="vs_limpiar"):
+            st.session_state.pop("vs_videos", None)
+            st.session_state.pop("vs_term_a_label", None)
+            st.session_state.pop("vs_term_b_label", None)
+            st.rerun()
+
+    if st.session_state.get("feed_descargados"):
+        if st.button("🎞️ Ir al Compilador →", use_container_width=True,
+                     type="primary", key="vs_goto_comp"):
+            st.session_state["compilador_clips"] = st.session_state["feed_descargados"]
+            st.session_state.modulo_activo = "Compilador"
+            st.rerun()
+
+
 def mostrar_tiktok_feed():
     st.title("📱 Feed de TikTok")
+
+    modo = st.radio(
+        "Modo",
+        ["📱 Feed Normal", "⚔️ Versus"],
+        horizontal=True,
+        key="feed_modo",
+        label_visibility="collapsed",
+    )
+
+    if modo == "⚔️ Versus":
+        _mostrar_versus()
+        return
+
     st.markdown("Explorá TikTok, copiá las URLs de los videos que te gusten y descargalos **sin marca de agua** — sin necesidad de login ni cookies.")
 
     # ── Atajos para abrir TikTok ──────────────────────────────────────────────
     st.markdown("### 1. Encontrá los videos en TikTok")
     st.caption("Abrí TikTok en el navegador, buscá por el nicho que quieras y copiá las URLs de los videos que más te gusten.")
 
-    nicho_label = st.selectbox("Acceso rápido por nicho", list(LINKS_BUSQUEDA.keys()), key="feed_nicho")
-    st.markdown(f"[🔗 Abrir **{nicho_label}** en TikTok →]({LINKS_BUSQUEDA[nicho_label]})")
+    nicho_label = st.selectbox("Categoría", list(LINKS_BUSQUEDA.keys()), key="feed_nicho")
+
+    if nicho_label in SUBCATEGORIAS:
+        sub_opciones = list(SUBCATEGORIAS[nicho_label].keys())
+        sub_label = st.selectbox("Subcategoría", sub_opciones, key="feed_subcat")
+
+        # Tercer nivel: sub-subcategorías (ej: Partidos recientes → Goles)
+        sub_sub_label = None
+        sub_sub_map = SUB_SUBCATEGORIAS.get(nicho_label, {}).get(sub_label)
+        if sub_sub_map:
+            sub_sub_label = st.selectbox("Filtro", list(sub_sub_map.keys()), key="feed_subsubcat")
+            sval = sub_sub_map[sub_sub_label]
+        else:
+            sval = SUBCATEGORIAS[nicho_label][sub_label]
+
+        tag_str = sub_tag(sval)
+        if sub_label == "Todos" and not sub_sub_label:
+            tiktok_url = LINKS_BUSQUEDA[nicho_label]
+        else:
+            tiktok_url = f"https://www.tiktok.com/search?q={tag_str.replace(' ', '+')}"
+    else:
+        tiktok_url = LINKS_BUSQUEDA[nicho_label]
+        sub_label = None
+        sub_sub_label = None
+
+    partes_link = [f"**{nicho_label}**"]
+    if sub_label and sub_label != "Todos":
+        partes_link.append(sub_label)
+    if sub_sub_label and sub_sub_label != "Todos":
+        partes_link.append(sub_sub_label)
+    link_texto = " › ".join(partes_link)
+    st.markdown(f"[🔗 Abrir {link_texto} en TikTok →]({tiktok_url})")
 
     st.markdown("---")
 
@@ -357,6 +534,36 @@ def mostrar_tiktok_feed():
         return
 
     videos = st.session_state["feed_videos"]
+
+    # ── Filtro copyright ──────────────────────────────────────────────────────
+    with st.expander("🔒 Filtro anti-copyright (opcional)"):
+        st.caption(
+            "Elimina videos de medios oficiales y canales de TV para reducir el riesgo de claims. "
+            "No es 100% efectivo — el contenido de fútbol puede recibir claims igual."
+        )
+        aplicar_filtro_cr = st.button(
+            "🔒 Aplicar filtro ahora",
+            key="btn_filtro_cr",
+            use_container_width=True,
+        )
+        if aplicar_filtro_cr:
+            antes = len(videos)
+            videos_filtrados = [
+                v for v in videos
+                if v.get("duracion", 999) <= 60
+                and not any(p in v.get("canal", "").lower() for p in _BROADCASTERS)
+                and not any(
+                    p in v.get("titulo", "").lower()
+                    for p in ("official", "broadcast", "tv", "highlights oficial")
+                )
+            ]
+            st.session_state["feed_videos"] = videos_filtrados
+            eliminados = antes - len(videos_filtrados)
+            if eliminados:
+                st.info(f"🔒 Filtro aplicado: {eliminados} videos eliminados → {len(videos_filtrados)} restantes.")
+            else:
+                st.success("✅ Ningún video fue detectado como oficial. El filtro no eliminó nada.")
+            st.rerun()
 
     # ── Barra de selección rápida ─────────────────────────────────────────────
     st.markdown("---")

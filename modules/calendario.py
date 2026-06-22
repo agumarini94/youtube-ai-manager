@@ -363,7 +363,7 @@ def _generar_ideas_claude(evento: dict) -> str:
     ideas_base = "\n".join(f"- {i}" for i in evento["ideas"])
     fecha_str = _formato_fecha(evento["inicio"], evento["fin"])
 
-    prompt = f"""Sos un experto en contenido viral para YouTube. El canal es ViralLocos, un canal enfocado en compilaciones de TikTok, fails, humor y momentos graciosos.
+    prompt = f"""Sos un experto en contenido viral de fútbol para YouTube. El canal es viralesDelFutbol, enfocado en compilaciones de goles, highlights, datos curiosos, debates y momentos épicos del fútbol para audiencia hispanohablante (principalmente Argentina y LATAM).
 
 Evento próximo: {evento['emoji']} {evento['nombre']} ({fecha_str})
 Categoría: {evento['categoria']}
@@ -371,10 +371,10 @@ Categoría: {evento['categoria']}
 Ideas iniciales que ya tenemos:
 {ideas_base}
 
-Generá 5 ideas NUEVAS y específicas de videos para este canal, pensando en:
-- Qué tipo de videos de TikTok van a viralizarse alrededor de esta fecha
-- Títulos concretos que usen keywords de búsqueda de YouTube
-- Formatos que funcionan en el nicho de fails/humor/compilaciones
+Generá 5 ideas NUEVAS y específicas de videos relacionados con este evento y con fútbol, pensando en:
+- Qué tipo de contenido de fútbol se va a viralizar alrededor de esta fecha
+- Títulos concretos que usen keywords de búsqueda de YouTube (máx 60 chars, con emoji)
+- Formatos que funcionan en el nicho de fútbol (goles, highlights, debates, ¿Cuál elegís?, datos curiosos)
 
 Respondé SOLO con una lista numerada de las 5 ideas. Sin intro, sin conclusión."""
 

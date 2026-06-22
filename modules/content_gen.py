@@ -160,7 +160,7 @@ def analizar_video_local(ruta_video: str, descripcion_usuario: str = "") -> dict
         "text": f"""Analizá estos frames de un video que el usuario quiere usar como base para crear contenido de YouTube.{descripcion_extra}
 
 Describí en español:
-1. ¿Qué tipo de contenido es? (animales, humor, deporte, tutorial, etc.)
+1. ¿Qué tipo de contenido es? (goles, highlights, debate, datos curiosos, fútbol callejero, etc.)
 2. ¿Qué está pasando en el video?
 3. ¿Qué hace a este video interesante o viral?
 4. ¿Qué estilo de narración le quedaría bien?
@@ -309,10 +309,10 @@ Claude genera en segundos todo el contenido listo para tu video: guión narrado,
 
 **Opción B — Tema manual:**
 1. Seleccioná "Escribir tema manualmente"
-2. Describí el tema (ej: "Compilación de los 10 gatos más graciosos de 2024")
+2. Describí el tema (ej: "Compilación de los 10 goles más épicos del Mundial 2026")
 
 **Configuración recomendada:**
-- Tipo: `Compilación viral`
+- Tipo: `Compilación de goles`
 - Duración: `5-7 minutos`
 - Idioma: `Español latino`
 
@@ -342,7 +342,7 @@ Claude genera en segundos todo el contenido listo para tu video: guión narrado,
     if modo_input == "Escribir tema manualmente":
         tema_manual = st.text_area(
             "Describe el tema del video",
-            placeholder="Ej: Compilación de los 10 fails más épicos de animales domésticos del 2024",
+            placeholder="Ej: Compilación de los 10 goles más épicos del Mundial 2026",
             height=80,
         )
         tema_final = tema_manual.strip()
@@ -416,14 +416,14 @@ Claude genera en segundos todo el contenido listo para tu video: guión narrado,
         tipo_contenido = st.selectbox(
             "Tipo de contenido",
             options=[
-                "Compilación viral",
-                "Top 10 / Ranking",
-                "Fails y momentos graciosos",
-                "Momentos épicos",
-                "Animales y mascotas",
-                "Reacciones",
-                "Documental corto",
-                "Tutorial / How-to",
+                "Compilación de goles",
+                "Top jugadores / Ranking",
+                "Datos curiosos del fútbol",
+                "Fails y bloopers deportivos",
+                "Predicciones / Debate",
+                "Mundial 2026",
+                "Historia de clubes y jugadores",
+                "Highlights de partidos",
             ]
         )
 

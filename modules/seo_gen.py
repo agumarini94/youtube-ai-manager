@@ -64,10 +64,23 @@ def extraer_frames_thumbnail(ruta_video: str, cantidad: int = 6) -> list[str]:
     return frames_b64
 
 
+def _formatear_comentario_encuesta(encuesta: dict) -> str:
+    """Convierte el dict encuesta en texto listo para postear como comentario."""
+    pregunta = encuesta.get("pregunta", "")
+    opciones = encuesta.get("opciones", [])
+    if not pregunta or not opciones:
+        return ""
+    lineas = [f"🗳️ {pregunta}", ""]
+    lineas += opciones
+    lineas += ["", "¡Comentá tu número! 👇"]
+    return "\n".join(lineas)
+
+
 def generar_seo(descripcion: str, tipo: str, canal_handle: str, idioma: str,
                 frames_b64: list[str] | None = None,
                 formato: str = "video",
-                angulo: str = "") -> dict:
+                angulo: str = "",
+                clips: list[dict] | None = None) -> dict:
     """
     Genera título, descripción optimizada y tags usando Claude.
     Si hay frames, Claude analiza el video visualmente.
@@ -81,13 +94,35 @@ def generar_seo(descripcion: str, tipo: str, canal_handle: str, idioma: str,
     handle_txt = f"Incluí '{canal_handle}' en la descripción." if canal_handle else ""
     angulo_txt = f"\nÁNGULO EMOCIONAL: {angulo}" if angulo else ""
 
+    clips_txt = ""
+    if clips:
+        titulos_clips = "\n".join(
+            f"  - {c.get('titulo', '')[:80]}" for c in clips if c.get("titulo")
+        )
+        if titulos_clips:
+            clips_txt = f"\n\nCLIPS QUE FORMAN EL VIDEO (títulos originales de TikTok):\n{titulos_clips}"
+
+    encuesta_schema = """{
+  "pregunta": "Pregunta de la encuesta (ej: '¿Cuál fue la mejor hinchada?', '¿Cuál fue el golazo del reel?')",
+  "opciones": ["1️⃣ Opción exacta del clip 1", "2️⃣ Opción exacta del clip 2", "3️⃣ Opción exacta del clip 3", "4️⃣ Opción exacta del clip 4 (opcional)"]
+}"""
+
+    encuesta_instrucciones = """
+ENCUESTA PARA COMENTARIO FIJADO (campo "encuesta" en el JSON):
+- Analizá los clips del video (títulos + frames si los tenés) y detectá los elementos REALES y ESPECÍFICOS que aparecen
+- Generá UNA pregunta temática y 2 a 4 opciones BASADAS ÚNICAMENTE en lo que existe en el video
+- Ejemplos correctos: clips de hinchadas Brasil/Argentina/España → pregunta "¿Cuál fue la mejor hinchada?" + opciones exactas esas; clips de goles Messi/Benzema/Neymar → pregunta "¿Cuál fue el mejor gol?" + opciones esos jugadores; clips de canciones Argentina/España/Portugal → pregunta "¿Cuál tema te gustó más?" + opciones esas canciones
+- NUNCA inventes opciones que no aparecen en los clips
+- IMPORTANTE: NO pongas la encuesta en la descripción del video. La descripción debe ser solo texto de SEO sin preguntas de votación. La encuesta va EXCLUSIVAMENTE en el campo JSON "encuesta" para postearse como comentario separado
+- Solo retorná null si el contenido es tan variado que no hay un hilo común (ej: 4 clips de temas completamente distintos sin relación)"""
+
     if es_short:
         prompt = f"""Sos un experto en crecimiento de YouTube Shorts. Tu objetivo es que este Short explote en el algoritmo.
 
 DESCRIPCIÓN DEL VIDEO: {descripcion}
 TIPO DE CONTENIDO: {tipo}
 IDIOMA: {idioma}
-FORMATO: YouTube Short (vertical, menos de 60 segundos){angulo_txt}
+FORMATO: YouTube Short (vertical, menos de 60 segundos){angulo_txt}{clips_txt}
 {handle_txt}
 
 CONTEXTO CRÍTICO:
@@ -95,6 +130,7 @@ CONTEXTO CRÍTICO:
 - El título se muestra TRUNCADO (≤40 chars visibles en el feed de Shorts)
 - El thumbnail importa para búsqueda y sugeridos
 - #Shorts es OBLIGATORIO para que YouTube lo clasifique correctamente
+{encuesta_instrucciones}
 
 Generá el paquete SEO en JSON:
 
@@ -106,15 +142,16 @@ Generá el paquete SEO en JSON:
     {{"estilo": "😂 Emocional", "titulo": "Variación con reacción emocional fuerte (lloré, no podía creer, etc.), máx 45 chars"}},
     {{"estilo": "🎯 Directo", "titulo": "Variación descriptiva y directa del contenido + año si aplica, máx 45 chars"}}
   ],
-  "descripcion": "Línea 1 (obligatoria): frase de gancho de máx 100 chars que aparece en el feed. Línea 2 en blanco. Luego 2-3 bullets breves con los mejores momentos usando emojis. Al final: #Shorts #viral #funny [otros 8+ hashtags relevantes en {idioma}]{(chr(10) + chr(32)*2 + canal_handle) if canal_handle else ''}.",
-  "tags": ["shorts", "viral", "funny", "fails", "compilation", "humor", "trending", "fyp", "reels", "tiktok"]
+  "descripcion": "Línea 1 (obligatoria): frase de gancho de máx 100 chars que aparece en el feed. Línea 2 en blanco. Luego 2-3 bullets breves con los mejores momentos usando emojis. Al final: #Shorts #viral #futbol #goles [otros 6+ hashtags relevantes en {idioma}]{(chr(10) + chr(32)*2 + canal_handle) if canal_handle else ''}.",
+  "tags": ["shorts", "viral", "futbol", "goles", "football", "compilation", "mundial2026", "fyp", "reels", "messi"],
+  "encuesta": {encuesta_schema}
 }}
 
 REGLAS para todos los títulos (principal y variaciones):
 - Máximo 45 caracteres incluyendo emoji
 - Empezá con emoji llamativo
 - Usá MAYÚSCULAS para palabras clave si el idioma es español
-- Patrones ganadores: "😱 NO LO PODÍA CREER", "💀 SE CAYÓ EN VIVO", "🤣 ESTE PERRO ES ÚNICO", "😭 LE PASÓ LO PEOR"
+- Patrones ganadores: "😱 NADIE LO VIO VENIR", "🔥 EL GOL MÁS ÉPICO", "💀 ESE PENAL IMPERDIBLE", "🤯 MESSI HACE ESTO"
 - NUNCA: "Compilación de...", "Los mejores...", títulos de más de 50 chars
 - Las 4 variaciones deben ser distintas entre sí y del título principal
 
@@ -124,8 +161,9 @@ Respondé SOLO con el JSON válido, sin texto extra."""
 
 DESCRIPCIÓN DEL VIDEO: {descripcion}
 TIPO DE CONTENIDO: {tipo}
-IDIOMA: {idioma}{angulo_txt}
+IDIOMA: {idioma}{angulo_txt}{clips_txt}
 {handle_txt}
+{encuesta_instrucciones}
 
 Generá el paquete SEO completo en JSON:
 
@@ -138,13 +176,14 @@ Generá el paquete SEO completo en JSON:
     {{"estilo": "🎯 Directo", "titulo": "Variación descriptiva y directa del contenido con año si aplica, máx 70 chars"}}
   ],
   "descripcion": "Descripción completa de 150-180 palabras. Estructura: (1) Párrafo de apertura que engancha. (2) 3 a 5 bullets con los mejores momentos, con emojis, SIN timestamps. (3) Frase de cierre invitando a suscribirse. (4) Mínimo 10 hashtags relevantes al final.",
-  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5", "tag6", "tag7", "tag8", "tag9", "tag10", "tag11", "tag12"]
+  "tags": ["futbol", "goles", "football", "mundial2026", "shorts", "viral", "compilation", "messi", "highlights", "soccer", "deportes", "argentina"],
+  "encuesta": {encuesta_schema}
 }}
 
 Reglas:
-- Título con energía, curioso, que dé ganas de clickear
+- Título con energía, curioso, que dé ganas de clickear — orientado a fútbol
 - Las 4 variaciones deben ser distintas entre sí y del título principal
-- Hashtags al final de la descripción con #
+- Hashtags al final de la descripción con # — incluir siempre #futbol #mundial2026
 - Tags del array sin # y en minúsculas
 - Respondé SOLO con el JSON válido, sin texto extra."""
 
@@ -216,7 +255,7 @@ Cuando ya tenés el video editado y listo para subir, pero necesitás el título
     canal_handle = st.text_input(
         "Handle de tu canal de YouTube",
         placeholder="@MiCanalDeYouTube",
-        value=st.session_state.get("seo_canal_handle", "@ViralLocos"),
+        value=st.session_state.get("seo_canal_handle", "@viralesDelFutbol"),
         help="Aparecerá en la descripción para que te encuentren"
     )
     if canal_handle:
@@ -241,7 +280,7 @@ Cuando ya tenés el video editado y listo para subir, pero necesitás el título
         )
         angulo = st.text_input(
             "Ángulo o promesa emocional del video (opcional)",
-            placeholder="Ej: estos perros demuestran que los animales sienten amor",
+            placeholder="Ej: estos goles demuestran por qué Messi es el mejor de la historia",
             help="Si lo completás, el SEO reflejará este ángulo para diferenciarte de videos similares.",
             key="seo_angulo",
         )
@@ -261,7 +300,7 @@ Cuando ya tenés el video editado y listo para subir, pero necesitás el título
         )
         angulo = st.text_input(
             "Ángulo o promesa emocional del video (opcional)",
-            placeholder="Ej: estos perros demuestran que los animales sienten amor",
+            placeholder="Ej: estos goles demuestran por qué Messi es el mejor de la historia",
             help="Si lo completás, el SEO reflejará este ángulo para diferenciarte de videos similares.",
             key="seo_angulo",
         )
@@ -356,14 +395,14 @@ Cuando ya tenés el video editado y listo para subir, pero necesitás el título
         tipo = st.selectbox(
             "Tipo de contenido",
             [
-                "Compilación viral",
-                "Top 10 / Ranking",
-                "Fails y momentos graciosos",
-                "Momentos épicos de deporte",
-                "Animales y mascotas",
-                "Reacciones",
-                "Gaming highlights",
-                "Otro",
+                "Compilación de goles",
+                "Top jugadores / Ranking",
+                "Datos curiosos del fútbol",
+                "Fails y bloopers deportivos",
+                "Predicciones / Debate",
+                "Mundial 2026",
+                "Historia de clubes y jugadores",
+                "Highlights de partidos",
             ]
         )
     with col2:

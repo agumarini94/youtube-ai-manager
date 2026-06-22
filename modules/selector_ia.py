@@ -53,32 +53,222 @@ _HEADERS = {
 # Categorías disponibles — mismas que en el Feed de TikTok de la app Streamlit
 # Valor: hashtag para la API. "general" usa mezcla aleatoria de tags populares.
 CATEGORIAS: dict[str, str] = {
-    "🔥 Tendencias generales":      "general",
-    "😂 Fails y humor":             "fails",
-    "🤣 Fails graciosos":           "failsgraciosos",
-    "💥 Caídas y tropiezos":        "caidas",
-    "🏅 Fails deportivos":          "sportsfails",
-    "🎬 TikTok fails":              "tiktokfails",
-    "😬 Momentos cringe":           "cringe",
-    "🎭 Humor cotidiano":           "humor",
-    "🤡 Bromas y pranks":           "prank",
-    "🧒 Kids fails":                "kidsfails",
-    "👴 Abuelos graciosos":         "abuelosgraciosos",
-    "🐶 Animales y fails":          "animalfails",
-    "🎉 Fails en fiestas":          "partyfails",
-    "🏠 Fails en casa":             "homefails",
-    "😅 Momentos de vergüenza":     "embarrassing",
-    "🤦 Expectativa vs realidad":   "expectativavsrealidad",
-    "🎪 Compilaciones virales":     "compilacion",
-    "🐾 Animales":                  "animalesgraciosos",
-    "⚽ Deportes":                  "deportes",
-    "🎵 Bailes y challenges":       "challenge",
-    "😱 Momentos épicos":           "momentosepicos",
-    "🍕 Comida":                    "comidaviral",
-    "🏋️ Fitness":                  "gym",
+    "🔥 Tendencias fútbol":         "general",
+    "⚽ Goles épicos":              "goles",
+    "🏆 Mundial 2026":             "mundial2026",
+    "🌟 Jugadas de crack":          "cracks",
+    "😂 Fails de fútbol":           "futbolfails",
+    "🥅 Atajadas increíbles":       "atajadas",
+    "🇦🇷 Fútbol argentino":        "futbolargentino",
+    "🔥 Highlights":                "footballhighlights",
+    "⚡ Fútbol callejero":          "freestylesoccer",
+    "💥 Momentos épicos":           "futbolmoments",
+    "🤣 Reacciones de hinchas":     "fansreactions",
+    "🏅 Champions League":          "championsleague",
+    "👦 Jóvenes talentos":          "youngtalents",
+    "🎯 Penales":                   "penales",
+    "🇧🇷 Fútbol brasileño":        "futbolbrasil",
+    "🏟️ Ambientes de estadio":     "estadio",
+    "🌍 Selecciones del mundo":     "selecciones",
+    "💪 Entrenamiento de jugadores":"futboltraining",
 }
 
-_TAGS_GENERALES = ["fails", "animalfails", "humor", "prank", "kidsfails", "sportsfails", "funny"]
+# Subcategorías por categoría.
+# Valor: string (solo tag) o tuple (tag, pista_para_claude).
+# La pista le dice a Claude qué tipo de video priorizar/descartar al seleccionar.
+SUBCATEGORIAS: dict[str, dict[str, str | tuple]] = {
+    "🏆 Mundial 2026": {
+        "Todos": "mundial2026",
+        "📅 Partidos recientes": (
+            "mundial 2026 partido hoy resultado",
+            "Preferir clips de partidos jugados recientemente: goles del día, resúmenes de encuentros recientes del mundial, reacciones a resultados. Rechazar análisis pre-torneo o contenido de archivo anterior al torneo.",
+        ),
+        "⚽ Goles": (
+            "mundial2026 goles",
+            "Preferir goles con reacción de hinchada o jugadas espectaculares. Rechazar análisis de periodistas o comentarios de escritorio.",
+        ),
+        "👟 Patadas / Faltas": (
+            "mundial2026 faltas",
+            "Preferir patadas duras, faltas fuertes, tarjetas rojas y entradas violentas. Rechazar análisis tácticos o resúmenes de partido.",
+        ),
+        "🎵 Canciones / Himnos": (
+            "hinchadas cantando mundial 2026",
+            "SOLO videos de hinchas, tribunas o aficionados cantando en estadios, plazas o calles. Rechazar videoclips musicales de artistas, cantantes o bandas.",
+        ),
+        "😂 Fails": (
+            "mundial2026 fails",
+            "Preferir errores graciosos, tropiezos, resbalar y situaciones vergonzosas de jugadores o árbitros. Rechazar goles o jugadas buenas.",
+        ),
+        "🎉 Celebraciones": (
+            "mundial2026 celebraciones",
+            "Preferir festejos de gol con emoción extrema: llanto, saltos, abrazos, reacciones de hinchada. Rechazar análisis o rueda de prensa.",
+        ),
+        "🔮 Pronósticos de hoy": "__pronosticos__",
+    },
+    "⚽ Goles épicos": {
+        "Todos": "goles",
+        "💥 Golazos": (
+            "golazos futbol",
+            "Solo goles espectaculares de larga distancia, tiros libres, voleas o situaciones imposibles. Rechazar goles simples o de penal sin mérito.",
+        ),
+        "🌀 Chilenas": (
+            "chilena gol futbol",
+            "SOLO chilenas, bicicletas y overhead kicks. Rechazar cualquier gol que no sea de ese tipo aunque sea muy bueno.",
+        ),
+        "🆓 Tiros libres": (
+            "freekick goal futbol",
+            "SOLO goles de tiro libre directo. Rechazar córners, jugadas en movimiento o goles de penal.",
+        ),
+        "🎯 De volea": (
+            "volea gol futbol",
+            "SOLO goles de volea o de primera sin que bote. Rechazar goles con control previo.",
+        ),
+    },
+    "🏅 Champions League": {
+        "Todos": "championsleague",
+        "⚽ Goles CL": (
+            "champions league goals",
+            "Preferir goles espectaculares de Champions con reacción del estadio y contexto de partido importante.",
+        ),
+        "😮 Remontadas": (
+            "champions league comeback",
+            "SOLO remontadas épicas donde un equipo revierte una desventaja grande. Rechazar victorias simples.",
+        ),
+        "🏆 Finales": (
+            "champions league final",
+            "SOLO clips de finales de Champions: momentos decisivos, goles, celebraciones del campeón.",
+        ),
+        "⏱ Último minuto": (
+            "champions last minute goal",
+            "SOLO goles en el último minuto o en tiempo añadido que cambian el resultado. Rechazar goles en tiempo normal.",
+        ),
+    },
+    "🇦🇷 Fútbol argentino": {
+        "Todos": "futbolargentino",
+        "🔵🟡 Boca": (
+            "bocajuniors",
+            "SOLO contenido de Boca Juniors: goles, jugadas, hinchada de la Bombonera. Rechazar cualquier contenido de River u otros clubes.",
+        ),
+        "🔴⚪ River": (
+            "riverplate",
+            "SOLO contenido de River Plate: goles, jugadas, hinchada del Monumental. Rechazar cualquier contenido de Boca u otros clubes.",
+        ),
+        "👑 Selección": (
+            "seleccionargentina",
+            "SOLO contenido de la Selección Argentina mayor: goles, jugadas, festejo de hinchada. Rechazar clubes argentinos.",
+        ),
+        "⚽ Primera División": (
+            "ligaargentina futbol",
+            "Preferir goles y jugadas de la Liga Profesional Argentina. Rechazar selecciones nacionales o torneos internacionales.",
+        ),
+    },
+    "😂 Fails de fútbol": {
+        "Todos": "futbolfails",
+        "❌ Penales fallados": (
+            "penalty miss football",
+            "SOLO penales que se fallan: afuera, al palo o desviados. Rechazar penales convertidos o atajados.",
+        ),
+        "🤣 Errores increíbles": (
+            "futbol fails graciosos",
+            "Errores garrafales, tropiezos, caídas y situaciones ridículas de jugadores. Preferir clips con reacción graciosa. Rechazar lesiones serias.",
+        ),
+        "🥅 Goles en contra": (
+            "futbol goles en contra",
+            "SOLO autogoles y goles en contra. Rechazar goles normales aunque sean espectaculares.",
+        ),
+        "🤦 Remates desviados": (
+            "remates fallados futbol",
+            "Disparos que van muy lejos del arco, al cielo o con dirección absurda. Preferir los más exagerados y graciosos.",
+        ),
+    },
+    "🎯 Penales": {
+        "Todos": "penales",
+        "✅ Goles de penal": (
+            "penalty goal football",
+            "Solo penales convertidos con estilo, pausa o reacción llamativa del público.",
+        ),
+        "❌ Fallados": (
+            "penalty miss football",
+            "SOLO penales que se fallan: afuera o al palo. Rechazar penales atajados o convertidos.",
+        ),
+        "🧤 Atajados": (
+            "penalty saved goalkeeper",
+            "SOLO atajadas de arquero en penales. Rechazar penales fallados por el pateador o convertidos.",
+        ),
+        "🔥 Definiciones": (
+            "penalty shootout football",
+            "SOLO tandas de penales completas o momentos decisivos de shootout en torneos importantes. Rechazar penales aislados.",
+        ),
+    },
+    "🌍 Selecciones del mundo": {
+        "Todos": "selecciones",
+        "🇦🇷 Argentina": (
+            "seleccion argentina futbol",
+            "SOLO contenido de la Selección Argentina. Rechazar clubes argentinos.",
+        ),
+        "🇧🇷 Brasil": (
+            "seleccion brasil futbol",
+            "SOLO contenido de la Selección Brasileña. Rechazar clubes brasileños.",
+        ),
+        "🇫🇷 Francia": (
+            "equipe de france football",
+            "SOLO contenido de la Selección Francesa. Rechazar clubes franceses.",
+        ),
+        "🇪🇸 España": (
+            "seleccion espana futbol",
+            "SOLO contenido de la Selección Española. Rechazar clubes españoles.",
+        ),
+    },
+}
+
+# Tercer nivel: sub-subcategorías por subcategoría específica.
+# Estructura: {categoria: {subcategoria: {sub_sub: valor}}}
+SUB_SUBCATEGORIAS: dict[str, dict[str, dict[str, str | tuple]]] = {
+    "🏆 Mundial 2026": {
+        "📅 Partidos recientes": {
+            "Todos": (
+                "mundial 2026 partido hoy resultado",
+                "Preferir clips de partidos jugados recientemente. Rechazar análisis pre-torneo o contenido de archivo.",
+            ),
+            "⚽ Goles": (
+                "mundial 2026 goles partido hoy",
+                "SOLO goles convertidos en partidos recientes del mundial. Preferir goles con reacción de hinchada. Rechazar análisis o goles de entrenamientos.",
+            ),
+            "👟 Faltas / Tarjetas": (
+                "mundial 2026 faltas tarjeta partido hoy",
+                "Preferir faltas fuertes, tarjetas rojas y entradas violentas de partidos recientes. Rechazar resúmenes generales sin jugada específica.",
+            ),
+            "🎵 Hinchadas": (
+                "mundial 2026 hinchadas estadio partido hoy",
+                "SOLO videos de hinchas y ambiente en el estadio durante partidos recientes. Rechazar videoclips musicales o contenido fuera del estadio.",
+            ),
+            "😂 Fails": (
+                "mundial 2026 fails error partido hoy",
+                "Preferir errores graciosos, tropiezos y situaciones vergonzosas en partidos recientes. Rechazar goles o jugadas buenas.",
+            ),
+            "🎉 Celebraciones": (
+                "mundial 2026 celebracion gol partido hoy",
+                "Preferir festejos de gol con emoción extrema en partidos recientes: llanto, saltos, abrazos. Rechazar análisis o rueda de prensa.",
+            ),
+            "📋 Resúmenes": (
+                "mundial 2026 resumen partido hoy highlights",
+                "Preferir resúmenes cortos de partidos recientes con los momentos más importantes. Rechazar análisis pre-partido o predicciones.",
+            ),
+        },
+    },
+}
+
+
+def sub_tag(val: str | tuple) -> str:
+    """Extrae el tag de búsqueda de un valor de SUBCATEGORIAS."""
+    return val[0] if isinstance(val, tuple) else val
+
+
+def sub_pista(val: str | tuple) -> str | None:
+    """Extrae la pista para Claude de un valor de SUBCATEGORIAS (None si no tiene)."""
+    return val[1] if isinstance(val, tuple) else None
+
+_TAGS_GENERALES = ["goles", "futbol", "mundial2026", "football", "futbolfails", "cracks", "soccer"]
 _HISTORIAL = Path(__file__).parent.parent / "data" / "historial_videos.json"
 MIN_VISTAS = 1_000
 
@@ -275,7 +465,7 @@ def _descargar_video(video: dict, carpeta: str) -> str | None:
 
 # ── Selección con Claude ───────────────────────────────────────────────────────
 
-def _claude_seleccionar(candidatos: list[dict], n: int) -> list[dict]:
+def _claude_seleccionar(candidatos: list[dict], n: int, pista: str | None = None) -> list[dict]:
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key or not candidatos:
         candidatos.sort(key=lambda x: x.get("vistas", 0), reverse=True)
@@ -286,15 +476,17 @@ def _claude_seleccionar(candidatos: list[dict], n: int) -> list[dict]:
         f"{i+1}. [{v['duracion']}s | {v['vistas']:,} views | @{v['canal']}] {v['titulo'][:80]}"
         for i, v in enumerate(candidatos)
     )
+    pista_txt = f"\nFILTRO DE CONTENIDO (prioritario): {pista}\n" if pista else ""
     try:
         resp = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=200,
             messages=[{"role": "user", "content": (
                 f"Seleccioná los mejores {n} videos de TikTok para una compilación de "
-                f"humor/entretenimiento en YouTube Shorts. "
+                f"fútbol/deportes en YouTube Shorts. "
                 f"Priorizá: duración 10-40s (evitar clips muy cortos <6s), altas vistas "
-                f"(más vistas = más validado), variedad de creadores (no repetir canal).\n\n"
+                f"(más vistas = más validado), variedad de creadores (no repetir canal).\n"
+                f"{pista_txt}\n"
                 f"CRITERIOS DE SELECCIÓN (orden de prioridad):\n"
                 f"1. Hook visual potente — algo ocurre de inmediato, sin introducción lenta\n"
                 f"2. Más de 50K vistas — validado por el algoritmo de TikTok\n"
@@ -464,9 +656,9 @@ def filtrar_por_seguidores(candidatos: list[dict], max_seguidores: int = 2_000_0
     return _filtrar_por_seguidores(candidatos, max_seguidores)
 
 
-def seleccionar_con_claude(candidatos: list[dict], n: int) -> list[dict]:
+def seleccionar_con_claude(candidatos: list[dict], n: int, pista: str | None = None) -> list[dict]:
     """Paso 3: Claude elige los mejores N clips del listado."""
-    return _claude_seleccionar(candidatos, n)
+    return _claude_seleccionar(candidatos, n, pista=pista)
 
 
 def buscar_y_seleccionar(n_clips: int = 4, max_duracion: int = 60) -> list[dict]:

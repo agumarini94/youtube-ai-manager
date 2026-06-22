@@ -12,9 +12,14 @@ Flujo:
 """
 import asyncio
 import html
+import logging
 import os
 import tempfile
+from datetime import datetime, timedelta, timezone as _tz
 from pathlib import Path
+
+_logger   = logging.getLogger(__name__)
+_TZ_ARG   = _tz(timedelta(hours=-3))
 
 import requests
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -32,15 +37,20 @@ from modules import flujo_estado as estado
 from modules.music_manager import (
     listar_tracks, buscar_y_descargar,
     buscar_canciones, descargar_preview, descargar_desde_url,
+    sugerir_musica_claude,
 )
 from modules.selector_ia import (
     CATEGORIAS,
+    SUBCATEGORIAS,
+    SUB_SUBCATEGORIAS,
+    sub_tag,
+    sub_pista,
     buscar_hashtags,
     filtrar_por_seguidores,
     seleccionar_con_claude,
     info_desde_urls,
 )
-from modules.workflow import compilar_y_generar_seo, subir_a_youtube
+from modules.workflow import compilar_y_generar_seo, subir_a_youtube, postear_comentario_encuesta
 from modules.texto_video import TIPOS_TEXTO, FONDOS, generar_texto_claude, generar_fondo_local, crear_video_texto
 from modules.imagen_reel import generar_pregunta_claude, descargar_imagenes, crear_reel_imagenes
 from modules.historia_reel import (
@@ -55,6 +65,8 @@ from modules.eleccion_reel import (
 from modules.config import SECS_POR_PAGINA_TEXTO
 from modules.thumbnail_gen import generar_thumbnail_automatico
 from modules.voice_intro import generar_audio_intro, agregar_intro_voz
+from modules.compilador import agregar_overlay_suscripcion
+from modules.pronosticos_mundial import obtener_partidos_hoy, generar_pronosticos_claude, crear_video_pronosticos
 
 TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID", "0"))
@@ -219,11 +231,22 @@ async def _enviar_preview_y_seo(bot: Bot, preview: str, seo: dict, thumbnail: st
     # 3. Enviar SEO + botones
     tiene_horizontal = video_horizontal and Path(video_horizontal).exists()
     nota_dual = "\n\n📺+🎬 <i>Se va a subir también la versión horizontal (YouTube Video).</i>" if tiene_horizontal else ""
+
+    encuesta = seo.get("encuesta")
+    encuesta_txt = ""
+    if encuesta and isinstance(encuesta, dict):
+        pregunta = encuesta.get("pregunta", "")
+        opciones = encuesta.get("opciones", [])
+        if pregunta and opciones:
+            opciones_str = "\n".join(opciones)
+            encuesta_txt = f"\n\n🗳️ <b>Encuesta (comentario fijado):</b>\n<i>{html.escape(pregunta)}</i>\n{html.escape(opciones_str)}"
+
     texto_seo = (
         f"📋 <b>SEO GENERADO</b>\n\n"
         f"📌 <b>Título:</b>\n{html.escape(titulo)}\n\n"
         f"📝 <b>Descripción:</b>\n{html.escape(desc_preview)}\n\n"
         f"🏷 <b>Tags:</b> {html.escape(tags_txt)}"
+        f"{encuesta_txt}"
         f"{nota_dual}"
     )
     teclado = InlineKeyboardMarkup([
@@ -260,7 +283,7 @@ async def _preguntar_formato(bot: Bot):
             InlineKeyboardButton("🖼 Pregunta + Imágenes", callback_data="formato_imagen"),
         ],
         [
-            InlineKeyboardButton("📖 Historia de trabajo", callback_data="formato_historia"),
+            InlineKeyboardButton("📖 Historia de hincha",  callback_data="formato_historia"),
             InlineKeyboardButton("🔢 ¿Cuál elegís?",       callback_data="formato_eleccion"),
         ],
         [
@@ -291,7 +314,10 @@ async def _preguntar_musica(bot: Bot):
     tracks = listar_tracks()
 
     # El botón de búsqueda siempre aparece, aunque la carpeta esté vacía
-    filas = [[InlineKeyboardButton("🔍 Buscar canción", callback_data="buscar_cancion")]]
+    filas = [[
+        InlineKeyboardButton("🤖 Sugerida por IA", callback_data="musica_sugerida"),
+        InlineKeyboardButton("🔍 Buscar canción",  callback_data="buscar_cancion"),
+    ]]
     for i in range(0, len(tracks), 2):
         fila = [InlineKeyboardButton(f"🎵 {tracks[i]['nombre']}", callback_data=f"musica_{i}")]
         if i + 1 < len(tracks):
@@ -452,6 +478,7 @@ async def _iniciar_busqueda(bot: Bot):
     formato = datos.get("formato", "video")
     tag = datos.get("tag_busqueda")   # puede ser None si no se eligió categoría
     pais = datos.get("pais_busqueda")  # None = global
+    pista = datos.get("pista_busqueda")  # None si no hay subcategoría con pista
     n = _N_CLIPS[formato]
     max_dur = _MAX_DUR[formato]
     loop = asyncio.get_event_loop()
@@ -507,7 +534,7 @@ async def _iniciar_busqueda(bot: Bot):
         f"🤖 <b>Paso 3/3</b> — Claude eligiendo los mejores {n} clips de {len(candidatos)} candidatos...",
         parse_mode="HTML",
     )
-    clips = await loop.run_in_executor(None, seleccionar_con_claude, candidatos, n)
+    clips = await loop.run_in_executor(None, seleccionar_con_claude, candidatos, n, pista)
 
     if not clips:
         estado.actualizar(estado="eligiendo_categoria")
@@ -757,6 +784,23 @@ async def _iniciar_subida(bot: Bot, fecha_publicacion: str | None = None):
         except Exception:
             url_horizontal = None
 
+    # Postear encuesta como comentario en el video subido
+    encuesta = seo.get("encuesta")
+    if url and encuesta and isinstance(encuesta, dict):
+        try:
+            video_id = url.split("v=")[-1].split("&")[0]
+            ok_enc = await loop.run_in_executor(
+                None, postear_comentario_encuesta, video_id, encuesta
+            )
+            if ok_enc:
+                await bot.send_message(
+                    chat_id=CHAT_ID,
+                    text="🗳️ Encuesta posteada como comentario. Fijala desde YouTube Studio para máximo engagement.",
+                    parse_mode="HTML",
+                )
+        except Exception:
+            pass
+
     estado.reset()
     rec = datos.get("recomendacion_horario") or {}
     label = html.escape(rec.get("label", fecha_publicacion or ""))
@@ -989,7 +1033,7 @@ async def cb_formato_imagen(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cb_formato_historia(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("📖 <b>Historia de atención al público</b>", parse_mode="HTML")
+    await query.edit_message_text("📖 <b>Historia de Hincha</b>", parse_mode="HTML")
     labels = list(SETTINGS.keys())
     filas = []
     for i in range(0, len(labels), 2):
@@ -1003,9 +1047,9 @@ async def cb_formato_historia(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await ctx.bot.send_message(
         chat_id=CHAT_ID,
         text=(
-            "📖 <b>Historia de atención al público</b>\n\n"
+            "📖 <b>Historia de Hincha</b>\n\n"
             "Claude escribe una historia en lunfardo para la descripción del video.\n\n"
-            "¿Dónde trabajaste?"
+            "¿Cuál es tu relación con el fútbol?"
         ),
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(filas),
@@ -1035,6 +1079,71 @@ async def cb_sin_musica(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("🔇 <b>Sin música de fondo.</b>", parse_mode="HTML")
     estado.actualizar(musica_ruta=None, musica_nombre=None, musica_seleccionada=True)
     await _iniciar_compilacion(ctx.bot)
+
+
+async def cb_musica_sugerida(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Claude elige la canción más adecuada para el video actual."""
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("🤖 <b>Claude está eligiendo la canción...</b>", parse_mode="HTML")
+
+    datos = estado.leer()
+    # Construir contexto según el tipo de contenido
+    partes = []
+    tag = datos.get("tag_busqueda")
+    if tag:
+        partes.append(f"Compilación de TikTok — categoría: {tag}")
+    if datos.get("txt_tipo"):
+        partes.append(f"Video de texto tipo '{datos['txt_tipo']}' sobre '{datos.get('txt_tema', '')}'")
+    if datos.get("img_tema"):
+        partes.append(f"Reel de pregunta viral — tema: {datos['img_tema']}")
+    if datos.get("his_setting_label"):
+        partes.append(f"Historia de hincha — contexto: {datos['his_setting_label']}")
+    if datos.get("elc_categoria"):
+        partes.append(f"Reel '¿Cuál elegís?' — categoría: {datos['elc_categoria']}")
+    clips = datos.get("clips", [])
+    if clips:
+        titulos = ", ".join(c.get("titulo", "")[:40] for c in clips[:3])
+        partes.append(f"Clips seleccionados: {titulos}")
+
+    contexto = " | ".join(partes) if partes else "Video de fútbol para YouTube Shorts"
+
+    loop = asyncio.get_event_loop()
+    sugerencia = await loop.run_in_executor(None, sugerir_musica_claude, contexto)
+
+    if not sugerencia or not sugerencia.get("busqueda"):
+        await ctx.bot.send_message(
+            chat_id=CHAT_ID,
+            text="❌ No pude obtener sugerencia. Usá <b>Buscar canción</b> manualmente.",
+            parse_mode="HTML",
+        )
+        await _preguntar_musica(ctx.bot)
+        return
+
+    busqueda = sugerencia["busqueda"]
+    razon    = sugerencia.get("razon", "")
+
+    msg = await ctx.bot.send_message(
+        chat_id=CHAT_ID,
+        text=f"🎵 Claude sugiere: <b>{html.escape(busqueda)}</b>\n<i>{html.escape(razon)}</i>\n\nBuscando en YouTube...",
+        parse_mode="HTML",
+    )
+
+    results = await loop.run_in_executor(None, buscar_canciones, busqueda, 5)
+    if not results:
+        await msg.edit_text(
+            f"❌ No encontré <b>{html.escape(busqueda)}</b> en YouTube.\n"
+            "Usá <b>Buscar canción</b> para buscar manualmente.",
+            parse_mode="HTML",
+        )
+        return
+
+    estado.actualizar(canciones_resultados=results, cancion_idx=0, estado="eligiendo_cancion")
+    await msg.edit_text(
+        f"✅ <b>{html.escape(busqueda)}</b> — {len(results)} resultados. Escuchá el preview:",
+        parse_mode="HTML",
+    )
+    await _mostrar_cancion(ctx.bot, idx=0)
 
 
 async def cb_buscar_cancion(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1159,6 +1268,25 @@ async def cb_pegar_links(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     estado.actualizar(estado="esperando_urls")
 
 
+async def _preguntar_subcategoria(bot: Bot, label: str):
+    """Muestra los botones de subcategoría para una categoría dada."""
+    subs = SUBCATEGORIAS[label]
+    filas = []
+    items = list(subs.items())
+    for i in range(0, len(items), 2):
+        fila = []
+        for slabel, sval in items[i:i+2]:
+            fila.append(InlineKeyboardButton(slabel, callback_data=f"sub_{sub_tag(sval)}"))
+        filas.append(fila)
+    await bot.send_message(
+        chat_id=CHAT_ID,
+        text=f"🗂 <b>{html.escape(label)}</b>\n¿Qué subcategoría querés buscar?",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(filas),
+    )
+    estado.actualizar(estado="eligiendo_subcategoria")
+
+
 async def cb_categoria(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Handler genérico para cualquier botón de categoría (pattern: ^cat_)."""
     query = update.callback_query
@@ -1167,6 +1295,87 @@ async def cb_categoria(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     label = next((k for k, v in CATEGORIAS.items() if v == tag), tag)
     await query.edit_message_text(f"🎯 Categoría elegida: <b>{html.escape(label)}</b>", parse_mode="HTML")
     estado.actualizar(tag_busqueda=tag)
+    if label in SUBCATEGORIAS:
+        await _preguntar_subcategoria(ctx.bot, label)
+    else:
+        await _preguntar_pais(ctx.bot)
+
+
+async def cb_subcategoria(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Handler para botones de subcategoría (pattern: ^sub_)."""
+    query = update.callback_query
+    await query.answer()
+    tag_buscado = query.data[4:]   # quita el prefijo "sub_"
+
+    # Reverse-lookup: buscar qué label y categoría corresponden a este tag
+    nicho_encontrado = None
+    sub_encontrado = None
+    pista = None
+    for cat_label, cat_subs in SUBCATEGORIAS.items():
+        for slabel, sval in cat_subs.items():
+            if sub_tag(sval) == tag_buscado:
+                nicho_encontrado = cat_label
+                sub_encontrado = slabel
+                pista = sub_pista(sval)
+                break
+        if sub_encontrado:
+            break
+
+    # Sentinel especial: pronósticos del día (no busca TikToks, genera video propio)
+    if tag_buscado == "__pronosticos__":
+        await query.edit_message_text("🔮 <b>Cargando partidos de hoy...</b>", parse_mode="HTML")
+        await _generar_y_mostrar_pronosticos(ctx.bot)
+        return
+
+    await query.edit_message_text(f"🗂 Subcategoría: <b>{html.escape(tag_buscado)}</b>", parse_mode="HTML")
+
+    # Si esta subcategoría tiene un tercer nivel, mostrarlo antes de ir al país
+    if nicho_encontrado and sub_encontrado:
+        sub_sub_map = SUB_SUBCATEGORIAS.get(nicho_encontrado, {}).get(sub_encontrado)
+        if sub_sub_map:
+            await _preguntar_sub_subcategoria(ctx.bot, nicho_encontrado, sub_encontrado)
+            return
+
+    estado.actualizar(tag_busqueda=tag_buscado, pista_busqueda=pista)
+    await _preguntar_pais(ctx.bot)
+
+
+async def _preguntar_sub_subcategoria(bot: Bot, nicho_label: str, sub_label: str):
+    """Muestra los botones del tercer nivel para una subcategoría con filtros adicionales."""
+    sub_sub_map = SUB_SUBCATEGORIAS[nicho_label][sub_label]
+    filas = []
+    items = list(sub_sub_map.items())
+    for i in range(0, len(items), 2):
+        fila = []
+        for sslabel, ssval in items[i:i + 2]:
+            fila.append(InlineKeyboardButton(sslabel, callback_data=f"subsub_{sub_tag(ssval)}"))
+        filas.append(fila)
+    await bot.send_message(
+        chat_id=CHAT_ID,
+        text=f"🗂 <b>{html.escape(sub_label)}</b>\n¿Qué tipo de contenido querés buscar?",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(filas),
+    )
+    estado.actualizar(estado="eligiendo_sub_subcategoria")
+
+
+async def cb_sub_subcategoria(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Handler para botones del tercer nivel (pattern: ^subsub_)."""
+    query = update.callback_query
+    await query.answer()
+    tag_buscado = query.data[7:]   # quita el prefijo "subsub_"
+
+    # Buscar la pista asociada a este tag en SUB_SUBCATEGORIAS
+    pista = None
+    for cat_subs in SUB_SUBCATEGORIAS.values():
+        for sub_subs in cat_subs.values():
+            for ssval in sub_subs.values():
+                if sub_tag(ssval) == tag_buscado:
+                    pista = sub_pista(ssval)
+                    break
+
+    await query.edit_message_text(f"🗂 Filtro: <b>{html.escape(tag_buscado)}</b>", parse_mode="HTML")
+    estado.actualizar(tag_busqueda=tag_buscado, pista_busqueda=pista)
     await _preguntar_pais(ctx.bot)
 
 
@@ -1440,7 +1649,7 @@ async def cb_cambiar_clip(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cb_aprobar_seo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("✅ SEO aprobado. Calculando horario óptimo...")
+    await _responder_query(query, ctx.bot, "✅ SEO aprobado. Calculando horario óptimo...")
     await _recomendar_horario(ctx.bot)
 
 
@@ -1713,7 +1922,7 @@ async def cb_recompilar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Vuelve a buscar clips nuevos manteniendo el formato elegido."""
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("🔄 Buscando clips nuevos...")
+    await _responder_query(query, ctx.bot, "🔄 Buscando clips nuevos...")
     estado.actualizar(estado="idle")
     await _iniciar_busqueda(ctx.bot)
 
@@ -1794,8 +2003,8 @@ async def cb_txt_tipo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         f"✅ Tipo: <b>{html.escape(label)}</b>\n\n"
         "✍️ <b>¿Sobre qué tema?</b>\n\n"
-        "Escribí el tema (ej: <code>los pulpos</code>, <code>primera vez en avión</code>, "
-        "<code>cosas que nadie te dice del trabajo</code>)\n\n"
+        "Escribí el tema (ej: <code>Messi en el Mundial 2022</code>, <code>los mejores goles de chilena</code>, "
+        "<code>datos que no sabías del fútbol argentino</code>)\n\n"
         "O mandá /saltar para que la IA elija.",
         parse_mode="HTML",
     )
@@ -2065,14 +2274,14 @@ async def cb_txt_cancelar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ── /imagen — Reel de pregunta viral con imágenes ─────────────────────────────
 
 _TEMAS_IMAGEN = [
-    ("💔 Amor y pareja",       "amor, pareja e infidelidad"),
-    ("💰 Dinero entre amigos", "dinero y amigos"),
-    ("👨‍👩‍👧 Familia y crianza",  "familia y crianza"),
-    ("🤝 Amistad y lealtad",   "amistad y lealtad"),
-    ("💼 Trabajo y jefes",     "trabajo y jefes"),
-    ("🍔 Comida y hábitos",    "comida y hábitos de vida"),
-    ("📱 Redes sociales",      "redes sociales"),
-    ("💸 Plata y gastos",      "plata, gastos y clase social"),
+    ("⚽ Messi vs Ronaldo",       "Messi o Ronaldo, el mejor de la historia del fútbol"),
+    ("🏆 Mejor equipo histórico", "el mejor equipo de fútbol de todos los tiempos"),
+    ("🇦🇷 Fútbol argentino",     "fútbol argentino y la selección nacional"),
+    ("🌍 Mundial 2026",           "el Mundial 2026 y los favoritos para ganarlo"),
+    ("🥅 Goleadores históricos",  "los mejores goleadores del fútbol mundial"),
+    ("💪 Mejor jugador joven",    "el mejor jugador joven del momento en el fútbol"),
+    ("🔥 Champions League",       "la Champions League y los grandes clubes europeos"),
+    ("🤔 Mejores técnicos",       "los mejores entrenadores de fútbol de la historia"),
 ]
 
 
@@ -2542,7 +2751,7 @@ async def cb_img_cancelar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     estado.reset()
 
 
-# ── /historia — Reel de historia de atención al público ───────────────────────
+# ── /historia — Reel de historia de hincha de fútbol ─────────────────────────
 
 async def cmd_historia(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != CHAT_ID:
@@ -2567,9 +2776,9 @@ async def cmd_historia(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     estado.actualizar(estado="his_eligiendo_setting")
     await update.message.reply_text(
-        "📖 <b>Historia de atención al público</b>\n\n"
+        "📖 <b>Historia de Hincha</b>\n\n"
         "Claude va a escribir una historia en lunfardo para la descripción del video.\n\n"
-        "¿Dónde trabajaste?",
+        "¿Cuál es tu relación con el fútbol?",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(filas),
     )
@@ -2872,6 +3081,471 @@ async def cb_his_cancelar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     await query.edit_message_text("❌ Cancelado.")
     estado.reset()
+
+
+# ── /pronosticos — Pronósticos del Mundial 2026 ────────────────────────────────
+
+async def cmd_pronosticos(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != CHAT_ID:
+        return
+    datos = estado.leer()
+    if datos["estado"] != "idle":
+        await update.message.reply_text(
+            f"⚠️ Hay un proceso activo: <b>{datos['estado']}</b>\nUsá /cancelar primero.",
+            parse_mode="HTML",
+        )
+        return
+    await update.message.reply_text("🔮 <b>Cargando partidos de hoy...</b>", parse_mode="HTML")
+    await _generar_y_mostrar_pronosticos(ctx.bot)
+
+
+async def _generar_y_mostrar_pronosticos(bot: Bot):
+    loop = asyncio.get_event_loop()
+
+    try:
+        partidos = await loop.run_in_executor(None, obtener_partidos_hoy)
+    except Exception as e:
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text=f"❌ Error consultando partidos de hoy: <code>{html.escape(str(e)[:200])}</code>",
+            parse_mode="HTML",
+        )
+        estado.reset()
+        return
+
+    if not partidos:
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text=(
+                "📅 No hay partidos del Mundial 2026 <b>pendientes</b> para hoy.\n"
+                "<i>(Los partidos ya terminados se excluyen del pronóstico.)</i>"
+            ),
+            parse_mode="HTML",
+        )
+        estado.reset()
+        return
+
+    await bot.send_message(
+        chat_id=CHAT_ID,
+        text=f"⚽ <b>{len(partidos)} partido(s) encontrados.</b> Generando pronósticos con IA...",
+        parse_mode="HTML",
+    )
+
+    try:
+        datos_ia = await loop.run_in_executor(None, generar_pronosticos_claude, partidos)
+    except Exception as e:
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text=f"❌ Error generando pronósticos: <code>{html.escape(str(e)[:200])}</code>",
+            parse_mode="HTML",
+        )
+        estado.reset()
+        return
+
+    estado.actualizar(pron_datos=datos_ia, estado="pron_aprobando")
+
+    texto   = datos_ia.get("texto", "")
+    titulo  = datos_ia.get("titulo", "")
+    preview = texto[:600] + ("..." if len(texto) > 600 else "")
+
+    teclado = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Crear video", callback_data="pron_aprobar"),
+            InlineKeyboardButton("🔄 Regenerar",   callback_data="pron_regenerar"),
+        ],
+        [InlineKeyboardButton("❌ Cancelar", callback_data="pron_cancelar")],
+    ])
+    await bot.send_message(
+        chat_id=CHAT_ID,
+        text=(
+            f"🔮 <b>{html.escape(titulo)}</b>\n\n"
+            f"<pre>{html.escape(preview)}</pre>"
+        ),
+        parse_mode="HTML",
+        reply_markup=teclado,
+    )
+
+
+async def cb_pron_aprobar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("✅ Pronósticos aprobados.\n\n🎵 <b>¿Agregás música?</b>", parse_mode="HTML")
+    tracks = listar_tracks()
+    filas = [[InlineKeyboardButton("🔇 Sin música", callback_data="pron_sin_musica")]]
+    for i in range(0, len(tracks), 2):
+        fila = [InlineKeyboardButton(f"🎵 {tracks[i]['nombre']}", callback_data=f"pron_musica_{i}")]
+        if i + 1 < len(tracks):
+            fila.append(InlineKeyboardButton(f"🎵 {tracks[i+1]['nombre']}", callback_data=f"pron_musica_{i+1}"))
+        filas.append(fila)
+    estado.actualizar(estado="pron_eligiendo_musica")
+    await ctx.bot.send_message(
+        chat_id=CHAT_ID,
+        text="🎵 <b>Elegí la música:</b>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(filas),
+    )
+
+
+async def cb_pron_regenerar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("🔄 Regenerando pronósticos...")
+    await _generar_y_mostrar_pronosticos(ctx.bot)
+
+
+async def cb_pron_musica(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    idx = int(query.data[len("pron_musica_"):])
+    tracks = listar_tracks()
+    if idx >= len(tracks):
+        await query.edit_message_text("❌ Track no disponible.")
+        return
+    track = tracks[idx]
+    estado.actualizar(pron_musica_ruta=track["ruta"])
+    await query.edit_message_text(f"🎵 <b>{html.escape(track['nombre'])}</b> seleccionada.", parse_mode="HTML")
+    await _crear_y_enviar_video_pronosticos(ctx.bot, track["ruta"])
+
+
+async def cb_pron_sin_musica(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("🔇 Sin música.")
+    await _crear_y_enviar_video_pronosticos(ctx.bot, None)
+
+
+async def _crear_y_enviar_video_pronosticos(bot: Bot, musica_ruta: str | None):
+    datos    = estado.leer()
+    pron_datos = datos.get("pron_datos", {})
+    texto    = pron_datos.get("texto", "")
+    titulo   = pron_datos.get("titulo", "Pronósticos IA - Mundial 2026")
+    hashtags = pron_datos.get("hashtags", ["#Shorts", "#Mundial2026"])
+
+    if not texto:
+        await bot.send_message(chat_id=CHAT_ID, text="❌ Faltan datos. Usá /pronosticos para empezar.")
+        estado.reset()
+        return
+
+    msg = await bot.send_message(
+        chat_id=CHAT_ID,
+        text="⚙️ <b>Creando el video de pronósticos...</b>\n<i>~30 segundos.</i>",
+        parse_mode="HTML",
+    )
+
+    carpeta_out = tempfile.mkdtemp(prefix="ytbot_pron_")
+    output_path = os.path.join(carpeta_out, "pronosticos.mp4")
+    loop = asyncio.get_event_loop()
+
+    try:
+        ok, err = await loop.run_in_executor(
+            None, crear_video_pronosticos,
+            pron_datos, output_path, musica_ruta, 0.18,
+        )
+    except Exception as e:
+        await msg.edit_text(
+            f"❌ Error creando video: <code>{html.escape(str(e)[:300])}</code>",
+            parse_mode="HTML",
+        )
+        estado.reset()
+        return
+
+    if not ok:
+        await msg.edit_text(
+            f"❌ Error creando video:\n<code>{html.escape(err[:300])}</code>",
+            parse_mode="HTML",
+        )
+        estado.reset()
+        return
+
+    # Aplicar campanita de suscripción
+    output_ov = os.path.join(carpeta_out, "pronosticos_ov.mp4")
+    try:
+        ok_ov, _ = await loop.run_in_executor(None, agregar_overlay_suscripcion, output_path, output_ov)
+        if ok_ov:
+            output_path = output_ov
+    except Exception:
+        pass
+
+    estado.actualizar(pron_video_path=output_path, estado="pron_aprobando_video")
+
+    cta_raw  = pron_datos.get("cta", "")
+    cta_desc = cta_raw.replace("\\n", " ").replace("\n", " ").strip()
+    descripcion = (
+        f"🤖 4 Inteligencias Artificiales predicen los partidos del Mundial 2026.\n\n"
+        f"{texto}\n\n"
+        f"💬 {cta_desc}\n\n"
+        + "\n".join(hashtags)
+    )
+    seo = {
+        "titulo":      titulo[:100],
+        "descripcion": descripcion[:4990],
+        "tags":        [h.lstrip("#") for h in hashtags],
+    }
+    estado.actualizar(seo=seo)
+
+    teclado = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📤 Subir a YouTube", callback_data="pron_subir"),
+            InlineKeyboardButton("🗑 Descartar",        callback_data="pron_descartar"),
+        ],
+    ])
+
+    size_mb = Path(output_path).stat().st_size / (1024 * 1024)
+    caption = f"🔮 <b>{html.escape(titulo)}</b>"
+
+    await msg.edit_text("✅ <b>Video listo.</b> Enviando preview...", parse_mode="HTML")
+
+    if size_mb < 48:
+        try:
+            with open(output_path, "rb") as f:
+                await bot.send_video(
+                    chat_id=CHAT_ID, video=f,
+                    caption=caption, parse_mode="HTML",
+                    reply_markup=teclado,
+                    write_timeout=120, read_timeout=120,
+                )
+            return
+        except Exception:
+            pass
+
+    await bot.send_message(
+        chat_id=CHAT_ID,
+        text=f"{caption}\n\n<i>(Video demasiado grande para preview)</i>",
+        parse_mode="HTML",
+        reply_markup=teclado,
+    )
+
+
+async def cb_pron_subir(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    datos      = estado.leer()
+    video_path = datos.get("pron_video_path", "")
+
+    if not video_path or not Path(video_path).exists():
+        await _responder_query(query, ctx.bot, "❌ Video no encontrado. Usá /pronosticos para empezar.")
+        estado.reset()
+        return
+
+    estado.actualizar(video_compilado=video_path, video_preview=video_path)
+    await _responder_query(query, ctx.bot, "📅 Calculando horario óptimo...")
+    await _recomendar_horario(ctx.bot)
+
+
+async def cb_pron_descartar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await _responder_query(query, ctx.bot, "🗑 Video descartado.")
+    estado.reset()
+
+
+async def cb_pron_cancelar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("❌ Cancelado.")
+    estado.reset()
+
+
+# ── Auto-pronósticos (publicación automática sin intervención) ─────────────────
+
+async def _auto_pronosticos_job(bot: Bot):
+    """
+    Genera y sube el reel de pronósticos completamente automático.
+    Llamado por el scheduler 8 horas antes del primer partido del día.
+    """
+    _logger.info("Auto-pronósticos: iniciando generación...")
+    loop = asyncio.get_event_loop()
+
+    # 1. Partidos pendientes del día
+    try:
+        partidos = await loop.run_in_executor(None, obtener_partidos_hoy)
+    except Exception as e:
+        _logger.error(f"Auto-pronósticos: error ESPN — {e}")
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text=f"🔮 Auto-pronósticos: ❌ Error consultando partidos: <code>{html.escape(str(e)[:150])}</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    if not partidos:
+        _logger.info("Auto-pronósticos: sin partidos pendientes, omitiendo.")
+        return
+
+    await bot.send_message(
+        chat_id=CHAT_ID,
+        text=f"🔮 <b>Auto-pronósticos</b> — {len(partidos)} partido(s) hoy. Generando con IA...",
+        parse_mode="HTML",
+    )
+
+    # 2. Generar predicciones con Claude
+    try:
+        datos = await loop.run_in_executor(None, generar_pronosticos_claude, partidos)
+    except Exception as e:
+        _logger.error(f"Auto-pronósticos: error Claude — {e}")
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text=f"🔮 Auto-pronósticos: ❌ Error generando pronósticos: <code>{html.escape(str(e)[:150])}</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    # 3. Música (siempre el primer track disponible)
+    tracks      = listar_tracks()
+    musica_ruta = tracks[0]["ruta"] if tracks else None
+
+    # 4. Crear video
+    carpeta_out = tempfile.mkdtemp(prefix="ytbot_autopron_")
+    output_path = os.path.join(carpeta_out, "pronosticos_auto.mp4")
+    try:
+        ok, err = await loop.run_in_executor(
+            None, crear_video_pronosticos, datos, output_path, musica_ruta, 0.18,
+        )
+    except Exception as e:
+        ok, err = False, str(e)
+
+    if not ok:
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text=f"🔮 Auto-pronósticos: ❌ Error creando video: <code>{html.escape(err[:200])}</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    # 5. Overlay de suscripción
+    output_ov = os.path.join(carpeta_out, "pronosticos_auto_ov.mp4")
+    try:
+        ok_ov, _ = await loop.run_in_executor(
+            None, agregar_overlay_suscripcion, output_path, output_ov,
+        )
+        if ok_ov:
+            output_path = output_ov
+    except Exception:
+        pass
+
+    # 6. SEO con descripción optimizada para engagement
+    titulo   = datos.get("titulo", "Predicciones IA - Mundial 2026 ⚽")[:100]
+    hashtags = datos.get("hashtags", ["#Shorts", "#Mundial2026"])
+    texto    = datos.get("texto", "")
+    cta_raw  = datos.get("cta", "")
+    cta_desc = cta_raw.replace("\\n", " ").replace("\n", " ").strip()
+    descripcion = (
+        f"🤖 4 Inteligencias Artificiales predicen los partidos del Mundial 2026.\n\n"
+        f"{texto}\n\n"
+        f"💬 {cta_desc}\n\n"
+        + "\n".join(hashtags)
+    )
+    seo = {
+        "titulo":      titulo,
+        "descripcion": descripcion[:4990],
+        "tags":        [h.lstrip("#") for h in hashtags],
+    }
+
+    # 7. Subir a YouTube
+    await bot.send_message(
+        chat_id=CHAT_ID,
+        text=f"🔮 <b>Auto-pronósticos</b> — Subiendo a YouTube...\n<i>{html.escape(titulo)}</i>",
+        parse_mode="HTML",
+    )
+    try:
+        url = await loop.run_in_executor(None, _subir_sync, output_path, seo, None, None)
+    except Exception as e:
+        _logger.error(f"Auto-pronósticos: error YouTube — {e}")
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text=f"🔮 Auto-pronósticos: ❌ Error subiendo: <code>{html.escape(str(e)[:150])}</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    if url:
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text=f"🔮 ✅ <b>Pronósticos publicados!</b>\n{html.escape(url)}",
+            parse_mode="HTML",
+        )
+        _logger.info(f"Auto-pronósticos: publicado — {url}")
+    else:
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text="🔮 Auto-pronósticos: ❌ No se obtuvo URL de YouTube.",
+            parse_mode="HTML",
+        )
+
+    # Limpiar archivos temporales
+    import shutil
+    try:
+        shutil.rmtree(carpeta_out, ignore_errors=True)
+    except Exception:
+        pass
+
+
+async def verificar_y_programar_pronosticos(bot: Bot, scheduler):
+    """
+    Corre diariamente a las 5:00 AM Argentina.
+    Busca el primer partido del día y programa la publicación 8 horas antes.
+    Si ese momento ya pasó (partido temprano), publica de inmediato.
+    """
+    _logger.info("Verificando partidos del día para auto-pronósticos...")
+    loop = asyncio.get_event_loop()
+
+    try:
+        partidos = await loop.run_in_executor(None, obtener_partidos_hoy)
+    except Exception as e:
+        _logger.warning(f"Check pronósticos: error obteniendo partidos — {e}")
+        return
+
+    if not partidos:
+        _logger.info("Check pronósticos: sin partidos hoy.")
+        return
+
+    # Encontrar la hora del primer partido del día
+    now = datetime.now(_TZ_ARG)
+    primer_dt: datetime | None = None
+    for p in partidos:
+        hora_str = p.get("hora", "")
+        if not hora_str:
+            continue
+        try:
+            h, m    = map(int, hora_str.split(":"))
+            dt      = now.replace(hour=h, minute=m, second=0, microsecond=0)
+            if primer_dt is None or dt < primer_dt:
+                primer_dt = dt
+        except Exception:
+            continue
+
+    if primer_dt is None:
+        # Sin horario definido por la API → publicar ahora
+        _logger.info("Auto-pronósticos: sin hora definida, publicando ahora.")
+        asyncio.create_task(_auto_pronosticos_job(bot))
+        return
+
+    pub_dt = primer_dt - timedelta(hours=8)
+
+    if pub_dt <= now:
+        # El momento ideal ya pasó → publicar de inmediato
+        _logger.info(f"Auto-pronósticos: pub_dt {pub_dt.strftime('%H:%M')} ya pasó, publicando ahora.")
+        asyncio.create_task(_auto_pronosticos_job(bot))
+    else:
+        # Programar con APScheduler para más tarde (job de fecha única)
+        scheduler.add_job(
+            _auto_pronosticos_job,
+            trigger="date",
+            run_date=pub_dt,
+            args=[bot],
+            id="pron_diario_hoy",
+            replace_existing=True,
+        )
+        _logger.info(f"Auto-pronósticos programados para las {pub_dt.strftime('%H:%M')} ARG.")
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text=(
+                f"🔮 <b>Pronósticos automáticos</b> programados para las "
+                f"<b>{pub_dt.strftime('%H:%M')}</b> hs\n"
+                f"<i>(8 hs antes del primer partido a las {primer_dt.strftime('%H:%M')} hs)</i>"
+            ),
+            parse_mode="HTML",
+        )
 
 
 # ── /eleccion — Reel "¿Cuál elegís?" ─────────────────────────────────────────
@@ -3461,10 +4135,11 @@ def crear_aplicacion() -> Application:
     )
 
     app.add_handler(CommandHandler("trabajar",  cmd_trabajar))
-    app.add_handler(CommandHandler("texto",     cmd_texto))
-    app.add_handler(CommandHandler("imagen",    cmd_imagen))
-    app.add_handler(CommandHandler("historia",  cmd_historia))
-    app.add_handler(CommandHandler("eleccion",  cmd_eleccion))
+    app.add_handler(CommandHandler("texto",        cmd_texto))
+    app.add_handler(CommandHandler("imagen",       cmd_imagen))
+    app.add_handler(CommandHandler("historia",     cmd_historia))
+    app.add_handler(CommandHandler("eleccion",     cmd_eleccion))
+    app.add_handler(CommandHandler("pronosticos",  cmd_pronosticos))
     app.add_handler(CommandHandler("urls",      cmd_urls))
 
     async def cmd_saltar(upd: Update, c: ContextTypes.DEFAULT_TYPE):
@@ -3495,13 +4170,16 @@ def crear_aplicacion() -> Application:
     app.add_handler(CallbackQueryHandler(cb_formato_eleccion,  pattern="^formato_eleccion$"))
     app.add_handler(CallbackQueryHandler(cb_musica_elegida,   pattern=r"^musica_\d+$"))
     app.add_handler(CallbackQueryHandler(cb_sin_musica,       pattern="^sin_musica$"))
+    app.add_handler(CallbackQueryHandler(cb_musica_sugerida,  pattern="^musica_sugerida$"))
     app.add_handler(CallbackQueryHandler(cb_buscar_cancion,   pattern="^buscar_cancion$"))
     app.add_handler(CallbackQueryHandler(cb_cancion_siguiente, pattern="^cancion_siguiente$"))
     app.add_handler(CallbackQueryHandler(cb_cancion_usar,      pattern="^cancion_usar$"))
     app.add_handler(CallbackQueryHandler(cb_volumen,           pattern=r"^vol_\d+$"))
     app.add_handler(CallbackQueryHandler(cb_buscar_texto,   pattern="^buscar_texto$"))
     app.add_handler(CallbackQueryHandler(cb_pegar_links,    pattern="^pegar_links$"))
-    app.add_handler(CallbackQueryHandler(cb_categoria,      pattern="^cat_"))
+    app.add_handler(CallbackQueryHandler(cb_categoria,         pattern="^cat_"))
+    app.add_handler(CallbackQueryHandler(cb_subcategoria,      pattern="^sub_"))
+    app.add_handler(CallbackQueryHandler(cb_sub_subcategoria,  pattern="^subsub_"))
     app.add_handler(CallbackQueryHandler(cb_pais,           pattern="^pais_"))
     app.add_handler(CallbackQueryHandler(cb_aprobar_clips,  pattern="^aprobar_clips$"))
     app.add_handler(CallbackQueryHandler(cb_orden_ok,        pattern="^orden_ok$"))
@@ -3531,7 +4209,7 @@ def crear_aplicacion() -> Application:
     app.add_handler(CallbackQueryHandler(cb_txt_descartar, pattern="^txt_descartar$"))
     app.add_handler(CallbackQueryHandler(cb_txt_cancelar,  pattern="^txt_cancelar$"))
 
-    # /historia — Reel de historia de atención al público
+    # /historia — Reel de historia de hincha de fútbol
     app.add_handler(CallbackQueryHandler(cb_his_setting,    pattern=r"^his_setting_\d+$"))
     app.add_handler(CallbackQueryHandler(cb_his_aprobar,    pattern="^his_aprobar$"))
     app.add_handler(CallbackQueryHandler(cb_his_regenerar,  pattern="^his_regenerar$"))
@@ -3540,6 +4218,15 @@ def crear_aplicacion() -> Application:
     app.add_handler(CallbackQueryHandler(cb_his_subir,      pattern="^his_subir$"))
     app.add_handler(CallbackQueryHandler(cb_his_descartar,  pattern="^his_descartar$"))
     app.add_handler(CallbackQueryHandler(cb_his_cancelar,   pattern="^his_cancelar$"))
+
+    # /pronosticos — Pronósticos del Mundial 2026
+    app.add_handler(CallbackQueryHandler(cb_pron_aprobar,    pattern="^pron_aprobar$"))
+    app.add_handler(CallbackQueryHandler(cb_pron_regenerar,  pattern="^pron_regenerar$"))
+    app.add_handler(CallbackQueryHandler(cb_pron_musica,     pattern=r"^pron_musica_\d+$"))
+    app.add_handler(CallbackQueryHandler(cb_pron_sin_musica, pattern="^pron_sin_musica$"))
+    app.add_handler(CallbackQueryHandler(cb_pron_subir,      pattern="^pron_subir$"))
+    app.add_handler(CallbackQueryHandler(cb_pron_descartar,  pattern="^pron_descartar$"))
+    app.add_handler(CallbackQueryHandler(cb_pron_cancelar,   pattern="^pron_cancelar$"))
 
     # /eleccion — Reel "¿Cuál elegís?"
     app.add_handler(CallbackQueryHandler(cb_elc_categoria,           pattern=r"^elc_cat_\d+$"))

@@ -49,60 +49,53 @@ def guardar_en_historial(categoria: str, nombres: list[str]) -> None:
 # ── Categorías preset ──────────────────────────────────────────────────────────
 
 CATEGORIAS: dict[str, dict] = {
-    "🚗 Coches":        {
-        "hint": "coches (Ferrari, Range Rover, pickup, deportivo, clásico, eléctrico)",
-        "terminos_base": ["ferrari sports car", "range rover suv", "dodge pickup truck",
-                          "porsche 911 red", "classic mustang car", "tesla electric car"],
+    "⚽ Jugadores actuales":     {
+        "hint": "jugadores actuales de fútbol (Messi, Ronaldo, Mbappé, Haaland, Vinicius, Pedri)",
+        "terminos_base": ["lionel messi argentina dribbling", "cristiano ronaldo portugal goal",
+                          "kylian mbappe france sprint", "erling haaland goal celebration",
+                          "vinicius jr brazil skill", "pedri spain midfield"],
     },
-    "🏠 Casas":         {
-        "hint": "casas (cabaña, penthouse, villa moderna, casa colonial, loft, chalet)",
-        "terminos_base": ["modern luxury villa house", "cozy mountain cabin", "city penthouse apartment",
-                          "colonial house exterior", "industrial loft interior", "beach house tropical"],
+    "🏆 Grandes clubes":        {
+        "hint": "grandes clubes de fútbol (Real Madrid, Barcelona, Manchester City, PSG, Boca, River)",
+        "terminos_base": ["real madrid stadium bernabeu", "fc barcelona camp nou",
+                          "manchester city etihad stadium", "psg paris saint germain",
+                          "boca juniors la bombonera", "river plate monumental stadium"],
     },
-    "🏖️ Vacaciones":    {
-        "hint": "destinos (Caribe, montañas, ciudad europea, desierto, Asia, patagonia)",
-        "terminos_base": ["caribbean beach turquoise water", "snowy mountain ski resort",
-                          "paris eiffel tower night", "sahara desert camels",
-                          "tokyo japan street lights", "patagonia mountains lake"],
+    "🌟 Leyendas históricas":   {
+        "hint": "leyendas del fútbol (Maradona, Pelé, Zidane, Ronaldo R9, Ronaldinho, Cruyff)",
+        "terminos_base": ["diego maradona argentina legend", "pele brazil football legend",
+                          "zinedine zidane real madrid", "ronaldo nazario brazil r9",
+                          "ronaldinho barcelona skill", "johan cruyff ajax barcelona"],
     },
-    "⌚ Relojes":        {
-        "hint": "relojes (Rolex, deportivo, vintage, smartwatch, elegante, militar)",
-        "terminos_base": ["rolex gold watch wrist", "sport chronograph watch", "vintage leather watch",
-                          "apple watch smartwatch", "dress watch elegant silver", "military tactical watch"],
+    "🇦🇷 Selecciones":          {
+        "hint": "selecciones nacionales (Argentina, Brasil, Francia, Alemania, España, Uruguay)",
+        "terminos_base": ["argentina national football team", "brazil selecao football",
+                          "france national football team", "germany national football team",
+                          "spain football team celebration", "uruguay national football team"],
     },
-    "👟 Zapatillas":    {
-        "hint": "zapatillas (Air Jordan, Yeezy, Nike clásico, Converse, botín, running)",
-        "terminos_base": ["air jordan sneakers red", "yeezy boost white", "nike air force white",
-                          "converse chuck taylor", "adidas ultraboost running", "high top boots street"],
+    "🥅 Posiciones en el campo":{
+        "hint": "posiciones (Delantero 9, Mediocampista 10, Lateral, Arquero, Líbero, Extremo)",
+        "terminos_base": ["football striker goal celebration", "midfielder football passing",
+                          "fullback lateral football run", "goalkeeper save spectacular",
+                          "centre back defending football", "winger extreme dribbling"],
     },
-    "🍕 Comida":        {
-        "hint": "comidas (sushi, pizza, asado, hamburguesa, pasta, tacos)",
-        "terminos_base": ["sushi platter japanese food", "neapolitan pizza wood oven",
-                          "argentinian bbq asado", "gourmet burger juicy",
-                          "italian pasta carbonara", "mexican tacos street food"],
+    "🏟️ Estadios icónicos":     {
+        "hint": "estadios (Bernabéu, Maracaná, La Bombonera, Wembley, Old Trafford, San Siro)",
+        "terminos_base": ["bernabeu stadium night lights", "maracana stadium brazil",
+                          "la bombonera boca juniors", "wembley stadium london",
+                          "old trafford manchester united", "san siro milan stadium"],
     },
-    "💻 Tech":          {
-        "hint": "gadgets (MacBook, gaming PC, consola, cámara, auriculares, drone)",
-        "terminos_base": ["macbook pro laptop desk", "gaming pc rgb setup", "playstation 5 console",
-                          "sony camera photography", "bose headphones music", "dji drone flying"],
+    "🎯 Mundiales épicos":       {
+        "hint": "mundiales (Argentina 78, Italia 90, Francia 98, Brasil 2002, España 2010, Qatar 2022)",
+        "terminos_base": ["argentina 1978 world cup trophy", "italy 1990 world cup final",
+                          "france 1998 world cup celebration", "brazil 2002 ronaldo world cup",
+                          "spain 2010 world cup iniesta", "argentina 2022 qatar world cup messi"],
     },
-    "🐕 Mascotas":      {
-        "hint": "razas de perros (Golden, Husky, French Bulldog, Pastor Alemán, Labrador, Pomerania)",
-        "terminos_base": ["golden retriever puppy cute", "siberian husky blue eyes",
-                          "french bulldog adorable", "german shepherd dog",
-                          "labrador retriever outdoor", "pomeranian fluffy puppy"],
-    },
-    "✈️ Aerolíneas":    {
-        "hint": "clases de vuelo y aerolíneas (primera clase, business, low cost, privado, helicóptero, ejecutivo)",
-        "terminos_base": ["first class airplane seat luxury", "business class flat bed",
-                          "private jet interior", "economy flight window seat",
-                          "helicopter cockpit flying", "concorde supersonic plane"],
-    },
-    "🍺 Salidas":       {
-        "hint": "planes de salida (bar de copas, boliche, cena romántica, after, terraza, bar de barrio)",
-        "terminos_base": ["rooftop bar city night", "nightclub dance party",
-                          "romantic candlelight dinner", "after party sunrise",
-                          "cozy neighborhood bar", "wine terrace outdoor"],
+    "💪 Delanteros históricos":  {
+        "hint": "delanteros históricos (Messi, CR7, Ronaldo R9, Romario, Van Basten, Lewandowski)",
+        "terminos_base": ["messi argentina dribbling goal", "cristiano ronaldo bicycle kick",
+                          "ronaldo r9 brazil skill 1998", "romario brazil goal celebration",
+                          "marco van basten volley goal", "lewandowski poland goal"],
     },
 }
 

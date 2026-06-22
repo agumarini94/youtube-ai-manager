@@ -329,7 +329,7 @@ def mostrar_sync_audio():
     with st.expander("❓ ¿Cómo funciona?"):
         st.markdown("""
 **El problema que resuelve:**
-Cuando armás una compilación (ej: goles, fails, animales), la narración genérica no coincide con lo que se ve en pantalla. Este módulo genera narración específica para **cada clip individual**.
+Cuando armás una compilación (ej: goles, atajadas, jugadas de crack), la narración genérica no coincide con lo que se ve en pantalla. Este módulo genera narración específica para **cada clip individual**.
 
 **Proceso automático:**
 1. Subís tu video compilado
@@ -372,7 +372,7 @@ Cuando armás una compilación (ej: goles, fails, animales), la narración gené
     with col1:
         contexto = st.text_input(
             "¿De qué trata el video?",
-            placeholder="Ej: goles increíbles de fútbol, fails graciosos, animales",
+            placeholder="Ej: goles increíbles del Mundial, atajadas épicas, jugadas de crack",
         )
     with col2:
         umbral_escena = st.slider(

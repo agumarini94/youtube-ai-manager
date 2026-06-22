@@ -50,13 +50,20 @@ def obtener_ultimo_video_youtube() -> dict | None:
     return videos[-1] if videos else None
 
 
-def bloque_video_anterior() -> str:
+def bloque_video_anterior(dias_limite: int = 7) -> str:
     """
     Genera el bloque de texto con el link al video anterior para inyectar
     al final de la descripción de YouTube.
+    Solo se incluye si el video anterior fue subido en los últimos `dias_limite` días.
     """
     ultimo = obtener_ultimo_video_youtube()
     if not ultimo:
+        return ""
+    try:
+        fecha_ultimo = datetime.fromisoformat(ultimo["fecha"])
+        if datetime.now(timezone.utc) - fecha_ultimo > timedelta(days=dias_limite):
+            return ""
+    except Exception:
         return ""
     canal = os.getenv("YOUTUBE_TARGET_CHANNEL", "").strip()
     handle = f"@{canal.replace(' ', '')}" if canal else ""
@@ -64,7 +71,7 @@ def bloque_video_anterior() -> str:
     lineas = [
         "",
         "─────────────────────────────",
-        "🔔 ¿Te hizo reír? ¡No te pierdas el anterior!",
+        "🔔 ¿Te perdiste el anterior? ¡No pares de ver!",
         f"▶ {titulo}",
         ultimo["url"],
     ]

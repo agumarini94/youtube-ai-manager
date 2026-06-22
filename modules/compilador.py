@@ -108,6 +108,23 @@ def concatenar_clips(rutas: list[str], salida: str, ancho: int, alto: int,
     ])
 
 
+def agregar_overlay_suscripcion(entrada: str, salida: str, segundos: float = 4.0) -> tuple[bool, str]:
+    """Superpone un botón rojo 'SUSCRIBITE AL CANAL' en los últimos N segundos del video."""
+    dur = obtener_duracion(entrada)
+    if dur <= 0:
+        return False, "No se pudo leer la duración del video."
+
+    t_ini = max(0.0, dur - segundos)
+    enable = f"between(t,{t_ini:.2f},{dur:.2f})"
+
+    vf = (
+        f"drawbox=x=(iw-400)/2:y=ih-135:w=400:h=80:color=0xFF0000@0.88:t=fill:enable='{enable}',"
+        f"drawtext=text='SUSCRIBITE AL CANAL':fontsize=34:fontcolor=white"
+        f":x=(w-text_w)/2:y=h-115:enable='{enable}'"
+    )
+    return run_ffmpeg([FFMPEG, "-i", entrada, "-vf", vf, "-codec:a", "copy", "-y", salida])
+
+
 def sugerir_orden_claude(clips: list[dict]) -> list[int] | None:
     """Llama a Claude para sugerir el orden óptimo de clips según retención."""
     import os, json, anthropic
@@ -324,18 +341,24 @@ def mostrar_compilador():
         _mostrar_resultado_compilacion(ruta_previa, ruta_horiz_previa)
         return
 
-    # ── Un solo clip en formato único: saltar compilación directamente ────────
+    # ── Un solo clip en formato único: aplicar overlay y saltar compilación ──
     _rutas = [clips[i]["ruta"] for i in orden]
     _dual_check = (res_label == _AMBOS)
     if len(_rutas) == 1 and not _dual_check and Path(_rutas[0]).exists():
         ruta_unica = _rutas[0]
-        st.session_state["comp_resultado_ruta"] = ruta_unica
+        carpeta_single = Path(tempfile.gettempdir()) / "compilador_out"
+        carpeta_single.mkdir(exist_ok=True)
+        ts_single = int(time.time())
+        ruta_single_ov = str(carpeta_single / f"compilacion_single_{ts_single}_ov.mp4")
+        ok_ov, _ = agregar_overlay_suscripcion(ruta_unica, ruta_single_ov)
+        ruta_final_single = ruta_single_ov if ok_ov else ruta_unica
+        st.session_state["comp_resultado_ruta"] = ruta_final_single
         st.session_state["comp_resultado_horizontal"] = None
-        st.session_state["video_compilado_ruta"] = ruta_unica
+        st.session_state["video_compilado_ruta"] = ruta_final_single
         st.session_state["video_compilado_listo"] = True
-        st.session_state["ve_ruta"] = ruta_unica
-        st.session_state["ve_nombre"] = Path(ruta_unica).name
-        st.session_state["video_para_subir"] = ruta_unica
+        st.session_state["ve_ruta"] = ruta_final_single
+        st.session_state["ve_nombre"] = Path(ruta_final_single).name
+        st.session_state["video_para_subir"] = ruta_final_single
         st.rerun()
 
     # ── Botón unir (solo si no hay compilación guardada) ───────────────────────
@@ -444,6 +467,13 @@ def mostrar_compilador():
             barra.empty()
             st.error(f"❌ Error al concatenar {label}: {err}")
             return
+
+        barra.progress(paso_actual / total_pasos, text=f"Agregando campanita de suscripción ({label})...")
+        ruta_overlay = str(carpeta_out / f"compilacion_{sufijo}_{ts}_ov.mp4")
+        ok_ov, _ = agregar_overlay_suscripcion(ruta_salida, ruta_overlay)
+        if ok_ov:
+            ruta_salida = ruta_overlay
+
         resultados[sufijo] = ruta_salida
 
     barra.progress(1.0, text="✅ ¡Listo!")
