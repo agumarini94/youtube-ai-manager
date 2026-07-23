@@ -8,6 +8,7 @@ import os
 import random
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import anthropic
@@ -295,6 +296,33 @@ def guardar_en_historial(ids: list[str]):
 
 # ── tikwm API ──────────────────────────────────────────────────────────────────
 
+def _info_por_url_instagram(url: str) -> dict | None:
+    """Metadata de un reel de Instagram via yt-dlp (sin descargar)."""
+    try:
+        import yt_dlp
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "cookiesfrombrowser": ("chrome",),
+        }
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url.strip(), download=False)
+        vid_id = str(info.get("id") or url.rstrip("/").split("/")[-1])
+        return {
+            "id": vid_id,
+            "titulo": (info.get("title") or info.get("description") or "Reel de Instagram")[:120],
+            "canal": info.get("uploader") or info.get("channel") or "",
+            "vistas": int(info.get("view_count") or 0),
+            "duracion": int(info.get("duration") or 0),
+            "thumbnail": info.get("thumbnail") or "",
+            "url": url.strip(),
+            "plataforma": "instagram",
+        }
+    except Exception:
+        return None
+
+
 def _info_por_url(url: str) -> dict | None:
     """Obtiene metadata de un video de TikTok por URL via tikwm."""
     try:
@@ -355,6 +383,12 @@ def _buscar_hashtag(tag: str, cantidad: int = 20) -> list[dict]:
             uid = autor.get("unique_id") or ""
             # challenge/posts usa "video_id", no "id"
             vid_id = str(item.get("video_id") or item.get("id") or "")
+            ct = int(item.get("create_time") or 0)
+            if not ct and vid_id.isdigit():
+                try:
+                    ct = int(vid_id) >> 32
+                except Exception:
+                    ct = 0
             videos.append({
                 "id": vid_id,
                 "titulo": item.get("title") or "Sin título",
@@ -366,6 +400,7 @@ def _buscar_hashtag(tag: str, cantidad: int = 20) -> list[dict]:
                 # challenge/posts no tiene hdplay — usar play + wmplay
                 "download_url": item.get("play") or "",
                 "download_url_wm": item.get("wmplay") or "",
+                "create_time": ct,
             })
         return videos
     except Exception:
@@ -401,6 +436,12 @@ def _buscar_keywords(query: str, cantidad: int = 20) -> list[dict]:
             vid_id = str(item.get("video_id") or item.get("id") or "")
             if not vid_id:
                 continue
+            ct = int(item.get("create_time") or item.get("createTime") or 0)
+            if not ct and vid_id.isdigit():
+                try:
+                    ct = int(vid_id) >> 32
+                except Exception:
+                    ct = 0
             videos.append({
                 "id": vid_id,
                 "titulo": item.get("title") or item.get("desc") or "Sin título",
@@ -411,6 +452,7 @@ def _buscar_keywords(query: str, cantidad: int = 20) -> list[dict]:
                 "url": f"https://www.tiktok.com/@{uid}/video/{vid_id}",
                 "download_url": item.get("play") or "",
                 "download_url_wm": item.get("wmplay") or "",
+                "create_time": ct,
             })
         return videos
     except Exception:
@@ -438,7 +480,38 @@ def _codec_ok(ruta: str) -> bool:
         return True
 
 
+def _descargar_instagram(video: dict, carpeta: str) -> str | None:
+    """Descarga un reel de Instagram usando yt-dlp."""
+    try:
+        import yt_dlp
+    except Exception:
+        return None
+    vid_id = video.get("id", "v")
+    outtmpl = os.path.join(carpeta, f"ig_{vid_id}.%(ext)s")
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "cookiesfrombrowser": ("chrome",),
+        "outtmpl": outtmpl,
+        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "merge_output_format": "mp4",
+    }
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([video["url"]])
+    except Exception:
+        return None
+    for archivo in Path(carpeta).glob(f"ig_{vid_id}.*"):
+        if archivo.suffix.lower() in [".mp4", ".webm", ".mkv"]:
+            if archivo.stat().st_size > 10_000 and _codec_ok(str(archivo)):
+                return str(archivo)
+            archivo.unlink(missing_ok=True)
+    return None
+
+
 def _descargar_video(video: dict, carpeta: str) -> str | None:
+    if video.get("plataforma") == "instagram":
+        return _descargar_instagram(video, carpeta)
     vid_id = video.get("id", "v")
     intentos = [
         (video.get("download_url", ""),    f"{vid_id}.mp4"),     # sin watermark — primero
@@ -555,12 +628,13 @@ def _filtrar_por_seguidores(candidatos: list[dict], max_seguidores: int) -> list
     ]
 
 
-def buscar_hashtags(max_duracion: int = 60, tag: str | None = None, pais: str | None = None) -> list[dict]:
+def buscar_hashtags(max_duracion: int = 60, tag: str | None = None, pais: str | None = None, max_horas: int | None = None) -> list[dict]:
     """
     Paso 1: busca candidatos crudos en TikTok. Sin filtros ni Claude.
     tag: hashtag específico (ej. "fails"). None = mezcla aleatoria de tags generales.
          "general" también usa mezcla aleatoria.
     pais: sufijo de país (ej. "argentina"). None = global.
+    max_horas: si se define, descarta videos publicados hace más de N horas.
     """
     # Para reels (max_duracion ≤ 30s), buscamos con límite relajado para tener más candidatos.
     # La compilación se encarga de recortar cada clip a max_duracion al normalizar.
@@ -617,7 +691,8 @@ def buscar_hashtags(max_duracion: int = 60, tag: str | None = None, pais: str | 
         resultados = list(ex.map(_fetch, todas_fuentes))
 
     total_crudos = sum(len(r) for r in resultados)
-    descartados_historial = descartados_dur = descartados_vistas = 0
+    descartados_historial = descartados_dur = descartados_vistas = descartados_antiguos = 0
+    limite_ts = (datetime.now() - timedelta(hours=max_horas)).timestamp() if max_horas else None
 
     for videos_lista in resultados:
         for v in videos_lista:
@@ -635,6 +710,10 @@ def buscar_hashtags(max_duracion: int = 60, tag: str | None = None, pais: str | 
                 descartados_vistas += 1
                 ids_vistos.add(v["id"])
                 continue
+            if limite_ts and v.get("create_time") and v["create_time"] < limite_ts:
+                descartados_antiguos += 1
+                ids_vistos.add(v["id"])
+                continue
             candidatos.append(v)
             ids_vistos.add(v["id"])
 
@@ -643,7 +722,8 @@ def buscar_hashtags(max_duracion: int = 60, tag: str | None = None, pais: str | 
         f"historial=-{descartados_historial} "
         f"duración=-{descartados_dur} "
         f"vistas<{MIN_VISTAS}=-{descartados_vistas} "
-        f"→ candidatos={len(candidatos)}"
+        + (f"antiguos>{ max_horas}h=-{descartados_antiguos} " if max_horas else "")
+        + f"→ candidatos={len(candidatos)}"
     )
 
     # Ordenar por vistas descendente — los más populares primero para Claude
@@ -673,10 +753,14 @@ def buscar_y_seleccionar(n_clips: int = 4, max_duracion: int = 60) -> list[dict]
 
 
 def info_desde_urls(urls: list[str]) -> list[dict]:
-    """Obtiene metadata de URLs de TikTok específicas (para el comando /urls)."""
+    """Obtiene metadata de URLs de TikTok o Instagram."""
     clips = []
     for url in urls:
-        info = _info_por_url(url.strip())
+        u = url.strip()
+        if "instagram.com" in u.lower():
+            info = _info_por_url_instagram(u)
+        else:
+            info = _info_por_url(u)
         if info:
             clips.append(info)
     return clips

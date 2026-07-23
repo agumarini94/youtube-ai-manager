@@ -743,6 +743,18 @@ Sube tu video terminado directamente a YouTube con todos los metadatos, sin entr
                 except Exception:
                     pass
 
+                encuesta_pendiente = st.session_state.get("encuesta_pendiente") or {}
+                if encuesta_pendiente.get("pregunta") and encuesta_pendiente.get("opciones"):
+                    video_id = url_video.rsplit("=", 1)[-1]
+                    with st.spinner("🗳️ Posteando encuesta como comentario..."):
+                        from modules.workflow import postear_comentario_encuesta
+                        ok = postear_comentario_encuesta(video_id, encuesta_pendiente)
+                    if ok:
+                        st.success("✅ Encuesta posteada como comentario. Fijala desde YouTube Studio para máximo engagement.")
+                        st.session_state.pop("encuesta_pendiente", None)
+                    else:
+                        st.warning("⚠️ No se pudo postear la encuesta automáticamente. Podés hacerlo a mano desde YouTube Studio.")
+
                 # Mostrar resumen
                 st.markdown("**Resumen de la publicación:**")
                 resumen_cols = st.columns(3)

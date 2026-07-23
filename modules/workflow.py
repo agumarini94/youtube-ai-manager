@@ -15,6 +15,7 @@ import pytz
 
 from modules.selector_ia import descargar_clips, guardar_en_historial
 from modules.compilador import concatenar_clips, agregar_overlay_suscripcion
+from modules.marca_agua import aplicar_marca_de_agua
 from modules.seo_gen import generar_seo, extraer_frames_thumbnail, generar_capitulos
 
 _TZ_ARG = pytz.timezone("America/Argentina/Buenos_Aires")
@@ -144,8 +145,48 @@ def _aplicar_hook(ruta_video: str, inicio_seg: int, carpeta: str) -> str:
     return ruta_video
 
 
+def _aplicar_anticopyright(video_in: str, video_out: str, musica: str | None = None) -> bool:
+    """
+    Aplica transformaciones para reducir matching del Content ID:
+    hflip + zoom 1.1x + speed 1.07x + reemplazo total del audio
+    (música elegida, o silencio si no hay).
+    """
+    vf = (
+        "hflip,"
+        "scale=trunc(iw*1.1/2)*2:trunc(ih*1.1/2)*2,"
+        "crop=trunc(iw/1.1/2)*2:trunc(ih/1.1/2)*2,"
+        "setpts=PTS/1.07"
+    )
+    if musica and Path(musica).exists():
+        cmd = [
+            FFMPEG, "-i", video_in,
+            "-stream_loop", "-1", "-i", musica,
+            "-filter_complex", f"[0:v]{vf}[v]",
+            "-map", "[v]", "-map", "1:a",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest",
+            "-y", video_out,
+        ]
+    else:
+        cmd = [
+            FFMPEG, "-i", video_in,
+            "-vf", vf,
+            "-an",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+            "-y", video_out,
+        ]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=600)
+        return r.returncode == 0 and Path(video_out).exists()
+    except Exception:
+        return False
+
+
 def compilar_y_generar_seo(clips: list[dict], formato: str = "video", progress_cb=None,
-                           musica: str | None = None, volumen: float = 0.15) -> dict:
+                           musica: str | None = None, volumen: float = 0.15,
+                           anticopyright: bool = False,
+                           reemplazar_audio: bool = False) -> dict:
     """
     Descarga clips, compila y genera SEO.
     Retorna {'ok': bool, 'video': str, 'preview': str, 'seo': dict,
@@ -158,7 +199,7 @@ def compilar_y_generar_seo(clips: list[dict], formato: str = "video", progress_c
             progress_cb(txt)
 
     dual = (formato == "ambos")
-    total = (6 if dual else 5) + (1 if musica else 0) + 1  # +1 overlay suscripción
+    total = (6 if dual else 5) + (1 if (musica or anticopyright) else 0) + 1  # +1 overlay suscripción
     paso = 1
 
     carpeta_tmp = tempfile.mkdtemp(prefix="ytbot_")
@@ -214,23 +255,35 @@ def compilar_y_generar_seo(clips: list[dict], formato: str = "video", progress_c
     ok_ov, _ = agregar_overlay_suscripcion(salida, salida_ov)
     if ok_ov:
         salida = salida_ov
+    if formato in ("reel", "ambos"):
+        aplicar_marca_de_agua(salida)
     if video_horizontal:
         salida_h_ov = os.path.join(carpeta_tmp, "compilacion_horizontal_overlay.mp4")
         ok_h_ov, _ = agregar_overlay_suscripcion(video_horizontal, salida_h_ov)
         if ok_h_ov:
             video_horizontal = salida_h_ov
 
-    if musica and Path(musica).exists():
+    if anticopyright:
+        notify(f"🛡️ <b>Paso {paso}/{total} — Aplicando anti-copyright (audio + flip + zoom + speed)...</b>")
+        paso += 1
+        salida_ac = os.path.join(carpeta_tmp, "compilacion_anticopyright.mp4")
+        if _aplicar_anticopyright(salida, salida_ac, musica):
+            salida = salida_ac
+        if video_horizontal:
+            salida_h_ac = os.path.join(carpeta_tmp, "compilacion_horizontal_anticopyright.mp4")
+            if _aplicar_anticopyright(video_horizontal, salida_h_ac, musica):
+                video_horizontal = salida_h_ac
+    elif musica and Path(musica).exists():
         from modules.music_manager import mezclar_musica
         nombre_musica = Path(musica).stem
         notify(f"🎵 <b>Paso {paso}/{total} — Mezclando música de fondo: {nombre_musica}...</b>")
         paso += 1
         salida_con_musica = os.path.join(carpeta_tmp, "compilacion_con_musica.mp4")
-        if mezclar_musica(salida, musica, salida_con_musica, volumen=volumen):
+        if mezclar_musica(salida, musica, salida_con_musica, volumen=volumen, reemplazar_audio=reemplazar_audio):
             salida = salida_con_musica
             if video_horizontal:
                 salida_h_musica = os.path.join(carpeta_tmp, "compilacion_horizontal_musica.mp4")
-                if mezclar_musica(video_horizontal, musica, salida_h_musica, volumen=volumen):
+                if mezclar_musica(video_horizontal, musica, salida_h_musica, volumen=volumen, reemplazar_audio=reemplazar_audio):
                     video_horizontal = salida_h_musica
 
     notify(f"🖼 <b>Paso {paso}/{total} — Generando preview y extrayendo frames...</b>")

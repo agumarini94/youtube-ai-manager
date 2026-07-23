@@ -13,6 +13,7 @@ from pathlib import Path
 import anthropic
 from PIL import Image, ImageDraw, ImageFont
 from modules.config import SECS_POR_PAGINA_TEXTO
+from modules.marca_agua import aplicar_marca_de_agua
 
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
 FFPROBE = "/opt/homebrew/bin/ffprobe"
@@ -332,6 +333,7 @@ def crear_video_texto(
 
     if not Path(output).exists():
         return False, "El video no se generó."
+    aplicar_marca_de_agua(output)
     return True, ""
 
 

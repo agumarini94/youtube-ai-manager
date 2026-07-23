@@ -16,6 +16,8 @@ import anthropic
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
+from modules.marca_agua import aplicar_marca_de_agua
+
 ESPN_URL = "http://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
 FFMPEG   = "/opt/homebrew/bin/ffmpeg"
 _TZ_ARG  = timezone(timedelta(hours=-3))
@@ -594,6 +596,7 @@ def crear_video_pronosticos(
 
         if not Path(output).exists():
             return False, "El video no se generó."
+        aplicar_marca_de_agua(output)
         return True, ""
 
     finally:

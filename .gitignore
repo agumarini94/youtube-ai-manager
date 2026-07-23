@@ -9,6 +9,7 @@ data/
 eleccion_historial.json
 MI_GUIA.txt
 debug_busqueda.py
+IDEAS_NEGOCIO.md
 
 # ── Entorno virtual ────────────────────────────────────────────────────────────
 venv/
@@ -39,6 +40,7 @@ tmp_*/
 *.jpg
 *.jpeg
 *.png
+!MarcaDeAgua.png
 
 # ── macOS ─────────────────────────────────────────────────────────────────────
 .DS_Store

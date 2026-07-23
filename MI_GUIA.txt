@@ -2,8 +2,8 @@
   YOUTUBE AI MANAGER — MI GUÍA PERSONAL
 ====================================================
 
-COMANDO PARA ARRANCAR LA APP
-------------------------------
+ARRANCAR LA APP WEB (Streamlit)
+---------------------------------
 
   1. Abrir la terminal
 
@@ -21,6 +21,79 @@ COMANDO PARA ARRANCAR LA APP
 
   Para cerrar la app: Ctrl + C en la terminal
   Para desactivar el venv: deactivate
+
+
+====================================================
+  BOT DE TELEGRAM (Automatización)
+====================================================
+
+  EL BOT ARRANCA SOLO — NO HAY QUE HACER NADA
+  ---------------------------------------------
+  El bot está configurado como servicio del sistema (launchd).
+  Arranca automáticamente cuando iniciás sesión en la Mac
+  y se reinicia solo si crashea. No necesitás abrir ninguna
+  terminal para usarlo.
+
+  Para confirmar que está activo, mandá en Telegram:
+    /ping
+  → Si responde, el bot está corriendo.
+
+
+  VERIFICAR EL ESTADO:
+  ---------------------
+  Opción 1 — desde Telegram:
+    /ping   → responde con la hora y el estado actual
+
+  Opción 2 — desde la terminal:
+    launchctl list | grep youtubebot
+    → Si aparece un número (PID), está corriendo.
+    → Si aparece un 0 o no aparece nada, está apagado.
+
+  Ver el log en vivo:
+    tail -f /tmp/youtubebot_error.log
+
+
+  REINICIAR EL BOT (si algo falla):
+  -----------------------------------
+  launchctl stop com.youtubebot
+  launchctl start com.youtubebot
+
+  O en un solo comando:
+  launchctl stop com.youtubebot && sleep 2 && launchctl start com.youtubebot
+
+
+  APAGAR EL BOT DEFINITIVAMENTE:
+  --------------------------------
+  launchctl unload ~/Library/LaunchAgents/com.youtubebot.plist
+
+  VOLVER A ACTIVARLO:
+  launchctl load ~/Library/LaunchAgents/com.youtubebot.plist
+
+
+  COMANDOS DEL BOT EN TELEGRAM:
+  --------------------------------
+  /trabajar   → Crear contenido (Texto, Imagen, Historia,
+                compilaciones de TikTok)
+  /texto      → Shorts con texto sobre video de fondo
+  /imagen     → Reel de pregunta viral con imágenes
+  /historia   → Historia de atención al público
+  /eleccion   → Reel "¿Cuál elegís?" con 6 opciones numeradas
+  /urls       → Compilar con URLs específicas de TikTok
+  /stats      → Ver vistas/likes de los últimos 10 videos
+  /estado     → Ver en qué paso quedó el proceso
+  /cancelar   → Cancelar el proceso en curso
+  /ping       → Verificar que el bot está vivo
+
+  WORKFLOW AUTOMÁTICO:
+  El bot sube un video solo, de lunes a viernes a las 18:00
+  (hora Argentina), sin que hagas nada.
+
+  SI EL BOT NO RESPONDE EN TELEGRAM:
+  ------------------------------------
+  1. Abrí una terminal
+  2. Ejecutá: launchctl list | grep youtubebot
+  3. Si no aparece: launchctl load ~/Library/LaunchAgents/com.youtubebot.plist
+  4. Esperá 5 segundos y mandá /ping en Telegram
 
 
 ====================================================

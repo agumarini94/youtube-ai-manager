@@ -191,6 +191,8 @@ async def main():
         BotCommand("imagen",    "Reel de pregunta viral con imágenes"),
         BotCommand("historia",  "Historia de atención al público"),
         BotCommand("eleccion",  "Reel ¿Cuál elegís? con 6 opciones numeradas"),
+        BotCommand("narracion", "Narración faceless: voz IA + stock + subtítulos"),
+        BotCommand("uso",       "Ver caracteres ElevenLabs restantes (videos /narracion)"),
         BotCommand("urls",      "Compilar con URLs de TikTok"),
         BotCommand("stats",     "Ver estadísticas de los últimos 10 videos"),
         BotCommand("estado",    "Ver el estado actual del bot"),

@@ -19,6 +19,8 @@ from pathlib import Path
 import anthropic
 from PIL import Image, ImageDraw
 
+from modules.marca_agua import aplicar_marca_de_agua
+
 # Reutilizamos todo lo que ya funciona de imagen_reel
 from modules.imagen_reel import (
     descargar_imagenes,
@@ -466,6 +468,7 @@ def crear_reel_historia(
     if not ok:
         return False, f"Error audio:\n{err[-300:]}"
 
+    aplicar_marca_de_agua(output)
     return True, ""
 
 

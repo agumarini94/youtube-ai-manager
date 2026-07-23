@@ -67,6 +67,17 @@ from modules.thumbnail_gen import generar_thumbnail_automatico
 from modules.voice_intro import generar_audio_intro, agregar_intro_voz
 from modules.compilador import agregar_overlay_suscripcion
 from modules.pronosticos_mundial import obtener_partidos_hoy, generar_pronosticos_claude, crear_video_pronosticos
+from modules.narracion_reel import (
+    listar_temas as listar_temas_narracion,
+    generar_guion_claude as generar_guion_narracion,
+    generar_audio_narracion,
+    compilar_video_narracion,
+    construir_seo as construir_seo_narracion,
+    obtener_uso_elevenlabs,
+    hay_creditos_para_guion,
+)
+from modules.pexels_video import descargar_para_narracion
+from modules.wikipedia_images import descargar_personajes
 
 TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID", "0"))
@@ -265,9 +276,11 @@ async def _enviar_preview_y_seo(bot: Bot, preview: str, seo: dict, thumbnail: st
 # ── Funciones bloqueantes (se corren en executor) ──────────────────────────────
 
 def _compilar_sync(clips: list[dict], formato: str, progress_cb=None,
-                   musica: str | None = None, volumen: float = 0.15) -> dict:
+                   musica: str | None = None, volumen: float = 0.15,
+                   reemplazar_audio: bool = False) -> dict:
     return compilar_y_generar_seo(clips, formato=formato, progress_cb=progress_cb,
-                                  musica=musica, volumen=volumen)
+                                  musica=musica, volumen=volumen,
+                                  reemplazar_audio=reemplazar_audio)
 
 
 def _subir_sync(video: str, seo: dict, fecha_publicacion: str | None = None, thumbnail: str | None = None) -> str | None:
@@ -438,7 +451,10 @@ async def _preguntar_categoria(bot: Bot):
         [
             InlineKeyboardButton("✍️ Buscar por texto", callback_data="buscar_texto"),
             InlineKeyboardButton("🔗 Pegar links",      callback_data="pegar_links"),
-        ]
+        ],
+        [
+            InlineKeyboardButton("📷 Subir link de Instagram", callback_data="pegar_instagram"),
+        ],
     ]
     for i in range(0, len(labels), 2):
         fila = []
@@ -479,6 +495,7 @@ async def _iniciar_busqueda(bot: Bot):
     tag = datos.get("tag_busqueda")   # puede ser None si no se eligió categoría
     pais = datos.get("pais_busqueda")  # None = global
     pista = datos.get("pista_busqueda")  # None si no hay subcategoría con pista
+    max_horas = datos.get("max_horas_busqueda")  # None = sin límite de antigüedad
     n = _N_CLIPS[formato]
     max_dur = _MAX_DUR[formato]
     loop = asyncio.get_event_loop()
@@ -488,12 +505,15 @@ async def _iniciar_busqueda(bot: Bot):
     etiqueta_cat = next((k for k, v in CATEGORIAS.items() if v == tag), tag or "tendencias generales")
     etiqueta_pais = next((k for k, v in PAISES.items() if v == pais), "") if pais else ""
     etiqueta_display = f"{etiqueta_cat}" + (f" · {etiqueta_pais}" if etiqueta_pais else "")
+    filtro_horas_txt = f" · últimas {max_horas}h" if max_horas else ""
     msg = await bot.send_message(
         chat_id=CHAT_ID,
-        text=f"🔍 <b>Paso 1/3</b> — Buscando en TikTok: <i>{html.escape(etiqueta_display)}</i>...",
+        text=f"🔍 <b>Paso 1/3</b> — Buscando en TikTok: <i>{html.escape(etiqueta_display + filtro_horas_txt)}</i>...",
         parse_mode="HTML",
     )
-    candidatos = await loop.run_in_executor(None, buscar_hashtags, max_dur, tag, pais)
+    candidatos = await loop.run_in_executor(
+        None, lambda: buscar_hashtags(max_dur, tag, pais, max_horas=max_horas)
+    )
 
     _teclado_rebuscar = InlineKeyboardMarkup([[
         InlineKeyboardButton("🔄 Cambiar búsqueda", callback_data="buscar_otros"),
@@ -575,8 +595,9 @@ async def _iniciar_compilacion(bot: Bot):
 
     musica = datos.get("musica_ruta")
     volumen = datos.get("musica_volumen", 0.15)
+    reemplazar_audio = datos.get("musica_reemplazar", False)
     resultado = await loop.run_in_executor(
-        None, _compilar_sync, clips, formato, progress_cb, musica, volumen
+        None, _compilar_sync, clips, formato, progress_cb, musica, volumen, reemplazar_audio
     )
 
     if not resultado["ok"]:
@@ -1170,13 +1191,37 @@ async def cb_cancion_siguiente(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cb_cancion_usar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Confirma la canción actual y muestra selector de volumen."""
+    """Confirma la canción y pregunta si sacar el audio original de los TikToks."""
     query = update.callback_query
     await query.answer()
     datos = estado.leer()
     idx = datos.get("cancion_idx", 0)
     results = datos.get("canciones_resultados", [])
     titulo = results[idx]["titulo"] if results and idx < len(results) else "la canción"
+
+    teclado = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔇 Sí, sacar audio (música 100%)", callback_data="audio_sacar")],
+        [InlineKeyboardButton("🎙️ No, mantener audio original",   callback_data="audio_mantener")],
+    ])
+    await query.edit_message_text(
+        f"🎵 <b>{html.escape(titulo[:80])}</b>\n\n"
+        f"🎧 ¿Querés <b>sacar el sonido original</b> de los TikToks y dejar solo la música?",
+        parse_mode="HTML",
+        reply_markup=teclado,
+    )
+    estado.actualizar(estado="eligiendo_audio_original")
+
+
+async def cb_audio_mantener(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Mantiene el audio original: muestra selector de volumen para mezcla."""
+    query = update.callback_query
+    await query.answer()
+    datos = estado.leer()
+    idx = datos.get("cancion_idx", 0)
+    results = datos.get("canciones_resultados", [])
+    titulo = results[idx]["titulo"] if results and idx < len(results) else "la canción"
+
+    estado.actualizar(musica_reemplazar=False)
 
     teclado = InlineKeyboardMarkup([
         [
@@ -1193,6 +1238,52 @@ async def cb_cancion_usar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         reply_markup=teclado,
     )
     estado.actualizar(estado="eligiendo_volumen_musica")
+
+
+async def cb_audio_sacar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Reemplaza el audio original por la música al 100% e inicia compilación."""
+    query = update.callback_query
+    await query.answer()
+    datos = estado.leer()
+    idx = datos.get("cancion_idx", 0)
+    results = datos.get("canciones_resultados", [])
+    if not results or idx >= len(results):
+        await query.edit_message_text("❌ Error. Usá /cancelar y empezá de nuevo.")
+        return
+
+    cancion = results[idx]
+    await query.edit_message_text(
+        f"⏳ Descargando <b>{html.escape(cancion['titulo'][:70])}</b>...",
+        parse_mode="HTML",
+    )
+
+    loop = asyncio.get_event_loop()
+    track = await loop.run_in_executor(None, descargar_desde_url, cancion["url"])
+    if not track:
+        await ctx.bot.send_message(
+            chat_id=CHAT_ID,
+            text="❌ Error descargando la canción. Intentá con otra.",
+        )
+        estado.actualizar(estado="eligiendo_musica")
+        await _preguntar_musica(ctx.bot)
+        return
+
+    estado.actualizar(
+        musica_ruta=track["ruta"],
+        musica_nombre=track["nombre"],
+        musica_volumen=1.0,
+        musica_reemplazar=True,
+        musica_seleccionada=True,
+    )
+    await ctx.bot.send_message(
+        chat_id=CHAT_ID,
+        text=(
+            f"✅ <b>{html.escape(track['nombre'][:70])}</b> lista.\n"
+            f"<i>Audio original silenciado · música al 100%.</i>"
+        ),
+        parse_mode="HTML",
+    )
+    await _iniciar_compilacion(ctx.bot)
 
 
 async def cb_volumen(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1333,6 +1424,9 @@ async def cb_subcategoria(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if nicho_encontrado and sub_encontrado:
         sub_sub_map = SUB_SUBCATEGORIAS.get(nicho_encontrado, {}).get(sub_encontrado)
         if sub_sub_map:
+            # Guardar filtro de antigüedad para subcategorías que lo requieren
+            if sub_encontrado == "📅 Partidos recientes":
+                estado.actualizar(max_horas_busqueda=48)
             await _preguntar_sub_subcategoria(ctx.bot, nicho_encontrado, sub_encontrado)
             return
 
@@ -1803,6 +1897,34 @@ async def handle_texto(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML",
         )
         await _mostrar_cancion_eleccion(ctx.bot, idx=0)
+        return
+
+    if est == "nar_esperando_cancion":
+        msg = await update.message.reply_text(
+            f"🔍 Buscando <b>{html.escape(texto)}</b> en YouTube...",
+            parse_mode="HTML",
+        )
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(None, buscar_canciones, texto, 5)
+        if not results:
+            await msg.edit_text(
+                "❌ No encontré esa canción. Intentá con otro nombre.\n"
+                "O elegí una de la lista:",
+                parse_mode="HTML",
+                reply_markup=_teclado_musica_narracion(),
+            )
+            estado.actualizar(estado="nar_eligiendo_musica")
+            return
+        estado.actualizar(
+            canciones_resultados=results,
+            cancion_idx=0,
+            estado="nar_eligiendo_cancion",
+        )
+        await msg.edit_text(
+            f"✅ Encontré <b>{len(results)} resultados</b>. Escuchá el preview:",
+            parse_mode="HTML",
+        )
+        await _mostrar_cancion_narracion(ctx.bot, idx=0)
         return
 
     if est == "img_eligiendo_musica":
@@ -4121,6 +4243,648 @@ async def cb_agregar_voz_intro(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ── /narracion — Reel faceless con narración + stock video (Pexels) ──────────
+
+def _teclado_temas_narracion() -> InlineKeyboardMarkup:
+    temas = listar_temas_narracion()
+    filas = []
+    for i in range(0, len(temas), 2):
+        fila = [InlineKeyboardButton(temas[i]["label"], callback_data=f"nar_tema_{i}")]
+        if i + 1 < len(temas):
+            fila.append(InlineKeyboardButton(temas[i + 1]["label"], callback_data=f"nar_tema_{i + 1}"))
+        filas.append(fila)
+    filas.append([
+        InlineKeyboardButton("🎲 Sorprendeme", callback_data="nar_tema_random"),
+        InlineKeyboardButton("❌ Cancelar",    callback_data="nar_cancelar"),
+    ])
+    return InlineKeyboardMarkup(filas)
+
+
+def _teclado_musica_narracion() -> InlineKeyboardMarkup:
+    tracks = listar_tracks()
+    filas = [
+        [InlineKeyboardButton("🔍 Buscar canción en YouTube", callback_data="nar_buscar_cancion")],
+        [InlineKeyboardButton("🔇 Sin música (solo voz)",     callback_data="nar_sin_musica")],
+    ]
+    for i in range(0, len(tracks), 2):
+        fila = [InlineKeyboardButton(f"🎵 {tracks[i]['nombre']}", callback_data=f"nar_musica_{i}")]
+        if i + 1 < len(tracks):
+            fila.append(InlineKeyboardButton(f"🎵 {tracks[i+1]['nombre']}", callback_data=f"nar_musica_{i+1}"))
+        filas.append(fila)
+    return InlineKeyboardMarkup(filas)
+
+
+async def _mostrar_menu_temas_narracion(bot: Bot):
+    estado.actualizar(estado="nar_eligiendo_tema")
+    await bot.send_message(
+        chat_id=CHAT_ID,
+        text=(
+            "🎙 <b>Reel con narración faceless</b>\n\n"
+            "Claude escribe un guion gracioso, ElevenLabs le pone voz y se buscan "
+            "videos stock en Pexels. La voz manda — el video se ajusta a su duración.\n\n"
+            "¿Sobre qué tema?"
+        ),
+        parse_mode="HTML",
+        reply_markup=_teclado_temas_narracion(),
+    )
+
+
+async def cmd_narracion(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != CHAT_ID:
+        return
+    datos = estado.leer()
+    if datos["estado"] != "idle":
+        await update.message.reply_text(
+            f"⚠️ Hay un proceso activo: <b>{datos['estado']}</b>\nUsá /cancelar primero.",
+            parse_mode="HTML",
+        )
+        return
+    await _mostrar_menu_temas_narracion(ctx.bot)
+
+
+async def _generar_y_mostrar_guion_narracion(bot: Bot, seed: str, queries_base: list[str]):
+    loop = asyncio.get_event_loop()
+    try:
+        datos_ia = await loop.run_in_executor(None, generar_guion_narracion, seed, queries_base)
+    except Exception as e:
+        await bot.send_message(chat_id=CHAT_ID, text=f"❌ Error generando guion: {e}")
+        estado.reset()
+        return
+
+    estado.actualizar(nar_datos=datos_ia, estado="nar_aprobando_guion")
+
+    guion    = datos_ia.get("guion", "")
+    titulo   = datos_ia.get("titulo", "")
+    hashtags = " ".join(datos_ia.get("hashtags", []))
+    preview  = guion[:500] + ("..." if len(guion) > 500 else "")
+    palabras = len(guion.split())
+
+    teclado = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Usar este guion", callback_data="nar_aprobar"),
+            InlineKeyboardButton("🔄 Regenerar",       callback_data="nar_regenerar"),
+        ],
+        [InlineKeyboardButton("❌ Cancelar", callback_data="nar_cancelar")],
+    ])
+    await bot.send_message(
+        chat_id=CHAT_ID,
+        text=(
+            f"📝 <b>Guion generado</b> <i>({palabras} palabras)</i>\n\n"
+            f"🎯 <b>Título:</b> {html.escape(titulo)}\n\n"
+            f"📖 <b>Guion:</b>\n<i>{html.escape(preview)}</i>\n\n"
+            f"🏷 {html.escape(hashtags)}"
+        ),
+        parse_mode="HTML",
+        reply_markup=teclado,
+    )
+
+
+async def cb_nar_tema(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    idx = int(query.data[len("nar_tema_"):])
+    temas = listar_temas_narracion()
+    if idx >= len(temas):
+        await query.edit_message_text("❌ Tema no válido.")
+        return
+    tema = temas[idx]
+    estado.actualizar(
+        nar_tema_id=tema["id"],
+        nar_tema_label=tema["label"],
+        nar_tema_seed=tema["seed"],
+        nar_pexels_queries_base=tema.get("pexels_queries", []),
+    )
+    await query.edit_message_text(
+        f"✅ Tema: <b>{html.escape(tema['label'])}</b>\n\n"
+        f"🤖 <b>Claude está escribiendo el guion...</b>",
+        parse_mode="HTML",
+    )
+    await _generar_y_mostrar_guion_narracion(ctx.bot, tema["seed"], tema.get("pexels_queries", []))
+
+
+async def cb_nar_tema_random(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    import random as _random
+    query = update.callback_query
+    await query.answer()
+    temas = listar_temas_narracion()
+    if not temas:
+        await query.edit_message_text("❌ No hay temas configurados.")
+        estado.reset()
+        return
+    tema = _random.choice(temas)
+    estado.actualizar(
+        nar_tema_id=tema["id"],
+        nar_tema_label=tema["label"],
+        nar_tema_seed=tema["seed"],
+        nar_pexels_queries_base=tema.get("pexels_queries", []),
+    )
+    await query.edit_message_text(
+        f"🎲 Tema al azar: <b>{html.escape(tema['label'])}</b>\n\n"
+        f"🤖 <b>Claude está escribiendo el guion...</b>",
+        parse_mode="HTML",
+    )
+    await _generar_y_mostrar_guion_narracion(ctx.bot, tema["seed"], tema.get("pexels_queries", []))
+
+
+async def cb_nar_regenerar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("🔄 Regenerando guion...")
+    datos = estado.leer()
+    await _generar_y_mostrar_guion_narracion(
+        ctx.bot,
+        datos.get("nar_tema_seed", ""),
+        datos.get("nar_pexels_queries_base", []),
+    )
+
+
+async def cb_nar_aprobar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    datos = estado.leer()
+    nar_datos = datos.get("nar_datos", {})
+    guion = nar_datos.get("guion", "")
+    queries = nar_datos.get("pexels_queries") or datos.get("nar_pexels_queries_base", [])
+
+    if not guion:
+        await query.edit_message_text("❌ Guion vacío. Empezá con /narracion.")
+        estado.reset()
+        return
+
+    # Verificar que haya créditos en ElevenLabs antes de gastar el llamado
+    loop = asyncio.get_event_loop()
+    ok_creditos, mensaje_creditos = await loop.run_in_executor(
+        None, hay_creditos_para_guion, len(guion.split())
+    )
+    if not ok_creditos:
+        await query.edit_message_text(mensaje_creditos, parse_mode="HTML")
+        estado.reset()
+        return
+
+    await query.edit_message_text(
+        "✅ Guion aprobado.\n\n"
+        "🎙 <b>Generando voz con ElevenLabs...</b>\n<i>~15-30 segundos.</i>",
+        parse_mode="HTML",
+    )
+
+    audio_path = await loop.run_in_executor(None, generar_audio_narracion, guion)
+    if not audio_path:
+        await ctx.bot.send_message(
+            chat_id=CHAT_ID,
+            text=(
+                "❌ No pude generar la voz con ElevenLabs.\n"
+                "Verificá que <code>ELEVENLABS_API_KEY</code> esté en el .env y que tengas créditos."
+            ),
+            parse_mode="HTML",
+        )
+        estado.reset()
+        return
+
+    estado.actualizar(nar_audio_path=audio_path)
+
+    # ── Wikipedia: imágenes de personajes mencionados en el guion ──────────────
+    personajes = nar_datos.get("personajes") or []
+    imagenes_personajes: list[str] = []
+    carpeta_wiki = tempfile.mkdtemp(prefix="ytbot_nar_wiki_")
+    if personajes:
+        await ctx.bot.send_message(
+            chat_id=CHAT_ID,
+            text=(
+                f"📷 <b>Buscando fotos en Wikipedia de:</b> "
+                f"{html.escape(', '.join(personajes[:4]))}"
+            ),
+            parse_mode="HTML",
+        )
+        try:
+            resultado_wiki = await loop.run_in_executor(
+                None, descargar_personajes, personajes[:4], carpeta_wiki,
+            )
+            imagenes_personajes = list(resultado_wiki.values())
+            if imagenes_personajes:
+                await ctx.bot.send_message(
+                    chat_id=CHAT_ID,
+                    text=f"✅ {len(imagenes_personajes)}/{len(personajes)} fotos de Wikipedia descargadas.",
+                )
+            else:
+                await ctx.bot.send_message(
+                    chat_id=CHAT_ID,
+                    text="ℹ️ No encontré fotos en Wikipedia, sigo solo con stock genérico.",
+                )
+        except Exception as e:
+            await ctx.bot.send_message(
+                chat_id=CHAT_ID,
+                text=f"⚠️ Wikipedia falló: <code>{html.escape(str(e)[:150])}</code>\nSigo con stock genérico.",
+                parse_mode="HTML",
+            )
+
+    await ctx.bot.send_message(
+        chat_id=CHAT_ID,
+        text="🎬 <b>Descargando videos stock de Pexels...</b>\n<i>30-90 segundos.</i>",
+        parse_mode="HTML",
+    )
+
+    carpeta_clips = tempfile.mkdtemp(prefix="ytbot_nar_clips_")
+    # Ajustamos cuántos clips de stock pedir según cuántas fotos de Wikipedia conseguimos
+    n_videos_stock = max(3, 6 - len(imagenes_personajes))
+    try:
+        clips = await loop.run_in_executor(
+            None, descargar_para_narracion, queries, carpeta_clips, n_videos_stock, 4.0,
+        )
+    except Exception as e:
+        await ctx.bot.send_message(
+            chat_id=CHAT_ID,
+            text=f"❌ Error bajando videos: <code>{html.escape(str(e)[:200])}</code>",
+            parse_mode="HTML",
+        )
+        estado.reset()
+        return
+
+    total_visuales = len(clips) + len(imagenes_personajes)
+    if total_visuales < 3:
+        await ctx.bot.send_message(
+            chat_id=CHAT_ID,
+            text=(
+                "❌ No se pudieron descargar suficientes visuales (videos + imágenes).\n"
+                "Verificá <code>PEXELS_API_KEY</code> en el .env."
+            ),
+            parse_mode="HTML",
+        )
+        estado.reset()
+        return
+
+    estado.actualizar(
+        nar_clips=clips,
+        nar_carpeta_clips=carpeta_clips,
+        nar_imagenes_personajes=imagenes_personajes,
+        nar_carpeta_wiki=carpeta_wiki,
+        estado="nar_eligiendo_musica",
+    )
+    resumen_visuales = f"{len(clips)} stock"
+    if imagenes_personajes:
+        resumen_visuales = f"{len(imagenes_personajes)} fotos Wikipedia + {len(clips)} stock"
+    await ctx.bot.send_message(
+        chat_id=CHAT_ID,
+        text=(
+            f"✅ Visuales listos: <b>{resumen_visuales}</b>.\n\n"
+            f"🎵 <b>¿Música de fondo?</b>\n<i>(Volumen bajo, no tapa la voz.)</i>"
+        ),
+        parse_mode="HTML",
+        reply_markup=_teclado_musica_narracion(),
+    )
+
+
+async def cb_nar_musica(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    idx = int(query.data[len("nar_musica_"):])
+    tracks = listar_tracks()
+    if idx >= len(tracks):
+        await query.edit_message_text("❌ Track no disponible.")
+        return
+    track = tracks[idx]
+    estado.actualizar(nar_musica_ruta=track["ruta"])
+    await query.edit_message_text(f"🎵 <b>{html.escape(track['nombre'])}</b>", parse_mode="HTML")
+    await _crear_y_enviar_narracion(ctx.bot, track["ruta"])
+
+
+async def cb_nar_sin_musica(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("🔇 Sin música (solo voz).")
+    await _crear_y_enviar_narracion(ctx.bot, None)
+
+
+async def cb_nar_buscar_cancion(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    estado.actualizar(estado="nar_esperando_cancion")
+    await query.edit_message_text(
+        "🔍 <b>¿Qué canción querés buscar?</b>\nEscribí nombre o artista:",
+        parse_mode="HTML",
+    )
+
+
+async def _mostrar_cancion_narracion(bot: Bot, idx: int):
+    datos = estado.leer()
+    results = datos.get("canciones_resultados", [])
+    if not results or idx >= len(results):
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text="❌ No hay más resultados.",
+            reply_markup=_teclado_musica_narracion(),
+        )
+        estado.actualizar(estado="nar_eligiendo_musica")
+        return
+
+    cancion = results[idx]
+    titulo  = cancion["titulo"]
+    estado.actualizar(cancion_idx=idx)
+
+    msg = await bot.send_message(
+        chat_id=CHAT_ID,
+        text=f"⏳ <b>Descargando preview {idx + 1}/{len(results)}...</b>",
+        parse_mode="HTML",
+    )
+    loop = asyncio.get_event_loop()
+    preview_path = await loop.run_in_executor(None, descargar_preview, cancion["url"], 25)
+    if preview_path:
+        try:
+            with open(preview_path, "rb") as f:
+                await bot.send_audio(
+                    chat_id=CHAT_ID, audio=f,
+                    title=titulo[:64],
+                    performer=f"Preview 25s · resultado {idx+1}/{len(results)}",
+                    duration=25,
+                )
+            Path(preview_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    teclado = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Usar esta", callback_data="nar_cancion_usar"),
+            InlineKeyboardButton("⏭ Siguiente", callback_data="nar_cancion_siguiente"),
+        ],
+        [InlineKeyboardButton("❌ Cancelar búsqueda", callback_data="nar_buscar_cancion_volver")],
+    ])
+    await msg.edit_text(
+        f"🎵 <b>{html.escape(titulo[:80])}</b>\n"
+        f"<i>Resultado {idx+1}/{len(results)}</i>",
+        parse_mode="HTML",
+        reply_markup=teclado,
+    )
+
+
+async def cb_nar_cancion_siguiente(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    datos = estado.leer()
+    idx = datos.get("cancion_idx", 0) + 1
+    await query.edit_message_text("⏭ Cargando siguiente...")
+    await _mostrar_cancion_narracion(ctx.bot, idx)
+
+
+async def cb_nar_cancion_usar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    datos = estado.leer()
+    idx = datos.get("cancion_idx", 0)
+    results = datos.get("canciones_resultados", [])
+    if not results or idx >= len(results):
+        await query.edit_message_text("❌ Error. Volvé a elegir música.")
+        estado.actualizar(estado="nar_eligiendo_musica")
+        return
+
+    cancion = results[idx]
+    await query.edit_message_text(
+        f"⏳ <b>Descargando:</b> {html.escape(cancion['titulo'][:60])}...",
+        parse_mode="HTML",
+    )
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, descargar_desde_url, cancion["url"])
+    if not result:
+        await ctx.bot.send_message(
+            chat_id=CHAT_ID,
+            text="❌ No se pudo descargar esa canción. Elegí otra:",
+            reply_markup=_teclado_musica_narracion(),
+        )
+        estado.actualizar(estado="nar_eligiendo_musica")
+        return
+    ruta_str = result["ruta"]
+    estado.actualizar(nar_musica_ruta=ruta_str)
+    await ctx.bot.send_message(
+        chat_id=CHAT_ID,
+        text=f"🎵 <b>{html.escape(cancion['titulo'][:60])}</b> lista.",
+        parse_mode="HTML",
+    )
+    await _crear_y_enviar_narracion(ctx.bot, ruta_str)
+
+
+async def cb_nar_buscar_cancion_volver(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    estado.actualizar(estado="nar_eligiendo_musica")
+    await query.edit_message_text(
+        "🎵 <b>Elegí música:</b>",
+        parse_mode="HTML",
+        reply_markup=_teclado_musica_narracion(),
+    )
+
+
+async def _crear_y_enviar_narracion(bot: Bot, musica_ruta: str | None):
+    datos                = estado.leer()
+    audio_path           = datos.get("nar_audio_path")
+    clips                = datos.get("nar_clips", [])
+    imagenes_personajes  = datos.get("nar_imagenes_personajes", [])
+    nar_datos            = datos.get("nar_datos", {})
+
+    if not audio_path or (not clips and not imagenes_personajes):
+        await bot.send_message(chat_id=CHAT_ID, text="❌ Faltan datos. Usá /narracion para empezar.")
+        estado.reset()
+        return
+
+    msg = await bot.send_message(
+        chat_id=CHAT_ID,
+        text=(
+            "⚙️ <b>Compilando video con subtítulos karaoke...</b>\n"
+            "<i>~60-120 segundos (la transcripción Whisper tarda un poco la primera vez).</i>"
+        ),
+        parse_mode="HTML",
+    )
+
+    inicio = asyncio.get_event_loop().time()
+
+    async def _ping():
+        pasos = [
+            "⚙️ Normalizando clips e imágenes...",
+            "🎞 Concatenando segmentos...",
+            "🎙 Sincronizando voz y música...",
+            "📝 Transcribiendo con Whisper...",
+            "🎨 Quemando subtítulos karaoke...",
+        ]
+        i = 0
+        while True:
+            await asyncio.sleep(20)
+            elapsed = int(asyncio.get_event_loop().time() - inicio)
+            try:
+                await msg.edit_text(
+                    f"{pasos[min(i, len(pasos)-1)]}\n<i>({elapsed}s transcurridos...)</i>",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+            i += 1
+
+    ping = asyncio.create_task(_ping())
+
+    carpeta_out = tempfile.mkdtemp(prefix="ytbot_nar_out_")
+    output_path = os.path.join(carpeta_out, "narracion.mp4")
+    loop = asyncio.get_event_loop()
+
+    def _compilar_thread():
+        return compilar_video_narracion(
+            audio_path, clips, output_path,
+            musica=musica_ruta,
+            vol_musica=0.10,
+            imagenes_personajes=imagenes_personajes,
+            aplicar_subtitulos=True,
+        )
+
+    try:
+        ok, err = await loop.run_in_executor(None, _compilar_thread)
+    except Exception as e:
+        ping.cancel()
+        await msg.edit_text(
+            f"❌ Error inesperado compilando:\n<code>{html.escape(str(e)[:300])}</code>",
+            parse_mode="HTML",
+        )
+        estado.reset()
+        return
+    ping.cancel()
+
+    if not ok:
+        await msg.edit_text(
+            f"❌ Error compilando:\n<code>{html.escape(err[:400])}</code>",
+            parse_mode="HTML",
+        )
+        estado.reset()
+        return
+
+    estado.actualizar(nar_video_path=output_path, estado="nar_aprobando_video")
+
+    titulo   = nar_datos.get("titulo", "")
+    hashtags = " ".join(nar_datos.get("hashtags", ["#Shorts"]))
+    teclado = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📤 Subir a YouTube", callback_data="nar_subir"),
+            InlineKeyboardButton("🗑 Descartar",       callback_data="nar_descartar"),
+        ],
+    ])
+    size_mb = Path(output_path).stat().st_size / (1024 * 1024)
+    await msg.edit_text("✅ <b>Narración lista.</b> Enviando preview...", parse_mode="HTML")
+
+    preview_enviado = False
+    if size_mb < 48:
+        try:
+            with open(output_path, "rb") as f:
+                await bot.send_video(
+                    chat_id=CHAT_ID,
+                    video=f,
+                    caption=f"🎙 <b>{html.escape(titulo)}</b>\n{html.escape(hashtags)}",
+                    parse_mode="HTML",
+                    reply_markup=teclado,
+                    write_timeout=120,
+                    read_timeout=120,
+                )
+            preview_enviado = True
+        except Exception:
+            pass
+
+    if not preview_enviado:
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text=f"🎙 <b>{html.escape(titulo)}</b>\n{html.escape(hashtags)}\n\n<i>(Video muy grande para preview)</i>",
+            parse_mode="HTML",
+            reply_markup=teclado,
+        )
+
+    # Contador de uso ElevenLabs — para saber cuántos videos más entran este mes
+    uso = await loop.run_in_executor(None, obtener_uso_elevenlabs)
+    if uso:
+        bar = _barra_uso(uso["porcentaje_usado"])
+        if uso["videos_restantes_estimados"] >= 5:
+            icono = "✅"
+        elif uso["videos_restantes_estimados"] >= 2:
+            icono = "⚠️"
+        else:
+            icono = "🚨"
+        msg_uso = (
+            f"{icono} <b>ElevenLabs · plan {uso['tier']}</b>\n"
+            f"{bar} {uso['porcentaje_usado']}%\n"
+            f"<code>{uso['chars_usados']:,}</code> / <code>{uso['chars_limite']:,}</code> caracteres\n\n"
+            f"🎬 Te quedan ~<b>{uso['videos_restantes_estimados']} videos</b> este mes"
+        )
+        if uso["videos_restantes_estimados"] == 0:
+            msg_uso += "\n\n⛔ <i>No vas a poder generar más narraciones hasta el reset del plan.</i>"
+        elif uso["videos_restantes_estimados"] <= 2:
+            msg_uso += "\n\n⚠️ <i>Andá con cuidado — quedan pocos.</i>"
+        await bot.send_message(chat_id=CHAT_ID, text=msg_uso, parse_mode="HTML")
+
+
+def _barra_uso(porcentaje: float, ancho: int = 14) -> str:
+    """Renderiza una barra visual estilo [████████░░░░░░] para mostrar % usado."""
+    llenas = min(ancho, int(round(porcentaje / 100 * ancho)))
+    vacias = ancho - llenas
+    return "█" * llenas + "░" * vacias
+
+
+async def cb_nar_subir(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    datos = estado.leer()
+    video_path = datos.get("nar_video_path", "")
+    nar_datos  = datos.get("nar_datos", {})
+
+    if not video_path or not Path(video_path).exists():
+        await _responder_query(query, ctx.bot, "❌ Video no encontrado. Empezá con /narracion.")
+        estado.reset()
+        return
+
+    seo = construir_seo_narracion(nar_datos)
+    estado.actualizar(video_compilado=video_path, video_preview=video_path, seo=seo)
+    await _responder_query(query, ctx.bot, "📅 Calculando horario óptimo...")
+    await _recomendar_horario(ctx.bot)
+
+
+async def cb_nar_descartar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await _responder_query(query, ctx.bot, "🗑 Narración descartada.")
+    estado.reset()
+
+
+async def cb_nar_cancelar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("❌ Cancelado.")
+    estado.reset()
+
+
+async def cmd_uso(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Muestra el uso actual de caracteres de ElevenLabs."""
+    if update.effective_chat.id != CHAT_ID:
+        return
+    loop = asyncio.get_event_loop()
+    uso = await loop.run_in_executor(None, obtener_uso_elevenlabs)
+    if not uso:
+        await update.message.reply_text(
+            "❌ No pude consultar tu plan de ElevenLabs.\n"
+            "Verificá que <code>ELEVENLABS_API_KEY</code> esté en el .env.",
+            parse_mode="HTML",
+        )
+        return
+    bar = _barra_uso(uso["porcentaje_usado"])
+    if uso["videos_restantes_estimados"] >= 5:
+        icono = "✅"
+    elif uso["videos_restantes_estimados"] >= 2:
+        icono = "⚠️"
+    else:
+        icono = "🚨"
+    texto = (
+        f"{icono} <b>ElevenLabs · plan {uso['tier']}</b>\n\n"
+        f"{bar} {uso['porcentaje_usado']}%\n"
+        f"📝 <code>{uso['chars_usados']:,}</code> / <code>{uso['chars_limite']:,}</code> caracteres usados\n"
+        f"💰 <code>{uso['chars_restantes']:,}</code> caracteres restantes\n\n"
+        f"🎬 Te quedan ~<b>{uso['videos_restantes_estimados']} videos</b> de /narracion este mes\n"
+        f"<i>(estimado a ~700 chars por video)</i>"
+    )
+    if uso["videos_restantes_estimados"] == 0:
+        texto += "\n\n⛔ <i>No vas a poder generar narraciones hasta el reset mensual.</i>"
+    elif uso["videos_restantes_estimados"] <= 2:
+        texto += "\n\n⚠️ <i>Quedan pocos. El reset es el primer día del mes calendario.</i>"
+    await update.message.reply_text(texto, parse_mode="HTML")
+
+
 # ── Construcción de la aplicación ──────────────────────────────────────────────
 
 def crear_aplicacion() -> Application:
@@ -4140,6 +4904,8 @@ def crear_aplicacion() -> Application:
     app.add_handler(CommandHandler("historia",     cmd_historia))
     app.add_handler(CommandHandler("eleccion",     cmd_eleccion))
     app.add_handler(CommandHandler("pronosticos",  cmd_pronosticos))
+    app.add_handler(CommandHandler("narracion",    cmd_narracion))
+    app.add_handler(CommandHandler("uso",          cmd_uso))
     app.add_handler(CommandHandler("urls",      cmd_urls))
 
     async def cmd_saltar(upd: Update, c: ContextTypes.DEFAULT_TYPE):
@@ -4174,6 +4940,8 @@ def crear_aplicacion() -> Application:
     app.add_handler(CallbackQueryHandler(cb_buscar_cancion,   pattern="^buscar_cancion$"))
     app.add_handler(CallbackQueryHandler(cb_cancion_siguiente, pattern="^cancion_siguiente$"))
     app.add_handler(CallbackQueryHandler(cb_cancion_usar,      pattern="^cancion_usar$"))
+    app.add_handler(CallbackQueryHandler(cb_audio_mantener,    pattern="^audio_mantener$"))
+    app.add_handler(CallbackQueryHandler(cb_audio_sacar,       pattern="^audio_sacar$"))
     app.add_handler(CallbackQueryHandler(cb_volumen,           pattern=r"^vol_\d+$"))
     app.add_handler(CallbackQueryHandler(cb_buscar_texto,   pattern="^buscar_texto$"))
     app.add_handler(CallbackQueryHandler(cb_pegar_links,    pattern="^pegar_links$"))
@@ -4257,6 +5025,21 @@ def crear_aplicacion() -> Application:
     app.add_handler(CallbackQueryHandler(cb_img_subir,                pattern="^img_subir$"))
     app.add_handler(CallbackQueryHandler(cb_img_descartar,            pattern="^img_descartar$"))
     app.add_handler(CallbackQueryHandler(cb_img_cancelar,             pattern="^img_cancelar$"))
+
+    # ── Callbacks de /narracion ────────────────────────────────────────────────
+    app.add_handler(CallbackQueryHandler(cb_nar_tema,                 pattern=r"^nar_tema_\d+$"))
+    app.add_handler(CallbackQueryHandler(cb_nar_tema_random,          pattern="^nar_tema_random$"))
+    app.add_handler(CallbackQueryHandler(cb_nar_aprobar,              pattern="^nar_aprobar$"))
+    app.add_handler(CallbackQueryHandler(cb_nar_regenerar,            pattern="^nar_regenerar$"))
+    app.add_handler(CallbackQueryHandler(cb_nar_musica,               pattern=r"^nar_musica_\d+$"))
+    app.add_handler(CallbackQueryHandler(cb_nar_sin_musica,           pattern="^nar_sin_musica$"))
+    app.add_handler(CallbackQueryHandler(cb_nar_buscar_cancion,       pattern="^nar_buscar_cancion$"))
+    app.add_handler(CallbackQueryHandler(cb_nar_cancion_siguiente,    pattern="^nar_cancion_siguiente$"))
+    app.add_handler(CallbackQueryHandler(cb_nar_cancion_usar,         pattern="^nar_cancion_usar$"))
+    app.add_handler(CallbackQueryHandler(cb_nar_buscar_cancion_volver, pattern="^nar_buscar_cancion_volver$"))
+    app.add_handler(CallbackQueryHandler(cb_nar_subir,                pattern="^nar_subir$"))
+    app.add_handler(CallbackQueryHandler(cb_nar_descartar,            pattern="^nar_descartar$"))
+    app.add_handler(CallbackQueryHandler(cb_nar_cancelar,             pattern="^nar_cancelar$"))
 
     # Captura mensajes de texto en todos los estados activos
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_texto))

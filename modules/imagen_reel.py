@@ -16,6 +16,8 @@ import anthropic
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
+from modules.marca_agua import aplicar_marca_de_agua
+
 FFMPEG  = "/opt/homebrew/bin/ffmpeg"
 FFPROBE = "/opt/homebrew/bin/ffprobe"
 
@@ -379,6 +381,7 @@ def crear_reel_imagenes(
     if not ok:
         return False, f"Error agregando overlay/audio:\n{err[-300:]}"
 
+    aplicar_marca_de_agua(output)
     return True, ""
 
 

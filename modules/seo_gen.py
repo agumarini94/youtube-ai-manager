@@ -444,6 +444,8 @@ Cuando ya tenés el video editado y listo para subir, pero necesitás el título
         # Título
         st.subheader("🎯 Título")
         titulo = resultado.get("titulo", "")
+        if "seo_titulo_override" in st.session_state:
+            st.session_state["seo_titulo_edit"] = st.session_state.pop("seo_titulo_override")
         titulo_editado = st.text_input(
             "Título (editable)",
             value=titulo,
@@ -469,7 +471,7 @@ Cuando ya tenés el video editado y listo para subir, pero necesitás el título
                     with col_btn:
                         st.markdown("<br>", unsafe_allow_html=True)
                         if st.button("Usar", key=f"usar_var_{i}", use_container_width=True):
-                            st.session_state["seo_titulo_edit"] = v_titulo
+                            st.session_state["seo_titulo_override"] = v_titulo
                             st.rerun()
 
         # Descripción
@@ -498,6 +500,26 @@ Cuando ya tenés el video editado y listo para subir, pero necesitás el título
         for i, tag in enumerate(tags):
             cols[i % 4].code(tag)
 
+        # Encuesta para comentario fijado
+        encuesta = resultado.get("encuesta") or {}
+        pregunta_encuesta = encuesta.get("pregunta", "") if isinstance(encuesta, dict) else ""
+        opciones_encuesta = encuesta.get("opciones", []) if isinstance(encuesta, dict) else []
+        if pregunta_encuesta and opciones_encuesta:
+            st.markdown("---")
+            st.subheader("🗳️ Encuesta (primer comentario fijado)")
+            st.caption("Se postea automáticamente como comentario al subir el video. Fijalo desde YouTube Studio para máximo engagement.")
+            preview_encuesta = _formatear_comentario_encuesta({
+                "pregunta": pregunta_encuesta,
+                "opciones": opciones_encuesta,
+            })
+            st.text_area(
+                "Vista previa del comentario",
+                value=preview_encuesta,
+                height=180,
+                key="seo_encuesta_preview",
+                disabled=True,
+            )
+
         # Exportar
         st.markdown("---")
         paquete = f"""TÍTULO:
@@ -523,6 +545,13 @@ TAGS:
                 st.session_state["ultimo_titulo"] = titulo_editado
                 st.session_state["ultima_descripcion"] = descripcion_editada
                 st.session_state["ultimos_tags"] = tags_editados
+                if pregunta_encuesta and opciones_encuesta:
+                    st.session_state["encuesta_pendiente"] = {
+                        "pregunta": pregunta_encuesta,
+                        "opciones": opciones_encuesta,
+                    }
+                else:
+                    st.session_state.pop("encuesta_pendiente", None)
                 # Pasar la ruta del video compilado si existe
                 for key in ("comp_resultado_ruta", "video_compilado_ruta", "ve_ruta"):
                     ruta = st.session_state.get(key, "")

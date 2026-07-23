@@ -11,6 +11,8 @@ import time
 import hashlib
 from pathlib import Path
 
+from modules.marca_agua import aplicar_marca_de_agua
+
 FFMPEG  = "/opt/homebrew/bin/ffmpeg"
 FFPROBE = "/opt/homebrew/bin/ffprobe"
 
@@ -352,6 +354,8 @@ def mostrar_compilador():
         ruta_single_ov = str(carpeta_single / f"compilacion_single_{ts_single}_ov.mp4")
         ok_ov, _ = agregar_overlay_suscripcion(ruta_unica, ruta_single_ov)
         ruta_final_single = ruta_single_ov if ok_ov else ruta_unica
+        if res_label == "Vertical 1080×1920 (Shorts / Reels)":
+            aplicar_marca_de_agua(ruta_final_single)
         st.session_state["comp_resultado_ruta"] = ruta_final_single
         st.session_state["comp_resultado_horizontal"] = None
         st.session_state["video_compilado_ruta"] = ruta_final_single
@@ -473,6 +477,8 @@ def mostrar_compilador():
         ok_ov, _ = agregar_overlay_suscripcion(ruta_salida, ruta_overlay)
         if ok_ov:
             ruta_salida = ruta_overlay
+        if alto > ancho:
+            aplicar_marca_de_agua(ruta_salida)
 
         resultados[sufijo] = ruta_salida
 
@@ -521,6 +527,7 @@ def _crear_short(ruta_video: str, inicio: float, duracion_s: float) -> tuple[str
         "-y", salida,
     ])
     if ok and Path(salida).exists():
+        aplicar_marca_de_agua(salida)
         return salida, ""
     return None, err
 

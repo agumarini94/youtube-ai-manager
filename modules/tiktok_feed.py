@@ -236,6 +236,32 @@ def _concat_lista(rutas: list[str], salida: str) -> tuple[bool, str]:
     return ok, err
 
 
+def _procesar_anticopyright(ruta_in: str, ruta_out: str, musica_path: str) -> tuple[bool, str]:
+    """
+    Reduce el riesgo de Content ID en clips de partidos:
+    reemplaza el audio original por música, aplica mirror horizontal,
+    zoom 1.1x y speed 1.07x. No es 100% efectivo.
+    """
+    vf = (
+        "hflip,"
+        "scale=trunc(iw*1.1/2)*2:trunc(ih*1.1/2)*2,"
+        "crop=trunc(iw/1.1/2)*2:trunc(ih/1.1/2)*2,"
+        "setpts=PTS/1.07"
+    )
+    return _run_ffmpeg([
+        _FFMPEG_BIN,
+        "-i", ruta_in,
+        "-stream_loop", "-1", "-i", musica_path,
+        "-filter_complex", f"[0:v]{vf}[v]",
+        "-map", "[v]",
+        "-map", "1:a",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+        "-c:a", "aac", "-b:a", "128k",
+        "-shortest",
+        "-y", ruta_out,
+    ])
+
+
 def _compilar_video_largo(clips: list[dict], ancho: int, alto: int, barra) -> str | None:
     """
     Procesa clips en grupos de 4, genera un intermedio por grupo y luego los une.
@@ -711,6 +737,58 @@ def mostrar_tiktok_feed():
         with st.expander("Ver videos descargados"):
             for d in descargados:
                 st.markdown(f"- **{d['titulo'][:60]}** · ⏱ {fmt_duracion(int(d.get('duracion', 0)))}")
+
+        # ── Anti-copyright (solo Partidos recientes) ─────────────────────────
+        if sub_label == "📅 Partidos recientes":
+            st.markdown("---")
+            with st.expander("🛡️ Procesar anti-copyright (recomendado para partidos recientes)", expanded=False):
+                st.caption(
+                    "Reemplaza el audio original por música de tu carpeta `music/` y aplica "
+                    "mirror horizontal + zoom 1.1x + speed 1.07x para reducir el matching del "
+                    "Content ID. **Baja el riesgo, no lo elimina al 100%.**"
+                )
+                from modules.music_manager import listar_tracks
+                tracks = listar_tracks()
+                if not tracks:
+                    st.warning("⚠️ No hay música en la carpeta `music/`. Agregá al menos un MP3 para usar este filtro.")
+                else:
+                    nombres = [t["nombre"] for t in tracks]
+                    track_sel = st.selectbox("Pista musical", nombres, key="ac_track_sel")
+                    if st.button(
+                        f"🛡️ Aplicar a los {len(descargados)} videos",
+                        key="btn_anticopyright",
+                        use_container_width=True,
+                        type="primary",
+                    ):
+                        musica_path = next(t["ruta"] for t in tracks if t["nombre"] == track_sel)
+                        barra_ac = st.progress(0, text="Procesando...")
+                        nuevos = []
+                        fallos = 0
+                        for i, d in enumerate(descargados):
+                            barra_ac.progress(
+                                i / len(descargados),
+                                text=f"Procesando {i+1}/{len(descargados)}: {d['titulo'][:40]}...",
+                            )
+                            p = Path(d["ruta"])
+                            ruta_out = str(p.parent / f"{p.stem}_ac.mp4")
+                            ok, _err = _procesar_anticopyright(d["ruta"], ruta_out, musica_path)
+                            if ok and Path(ruta_out).exists():
+                                d2 = dict(d)
+                                d2["ruta"] = ruta_out
+                                d2["nombre"] = Path(ruta_out).name
+                                nuevos.append(d2)
+                            else:
+                                fallos += 1
+                                nuevos.append(d)
+                        barra_ac.progress(1.0, text="✅ Listo")
+                        st.session_state["feed_descargados"] = nuevos
+                        st.session_state["compilador_clips"] = nuevos
+                        ok_count = len(nuevos) - fallos
+                        if fallos:
+                            st.warning(f"⚠️ {ok_count}/{len(nuevos)} procesados ok, {fallos} fallaron (quedan los originales).")
+                        else:
+                            st.success(f"✅ {ok_count} videos procesados. Ahora compilá y subí.")
+                        st.rerun()
 
         # ── Compilar video largo (grupos de 4) ───────────────────────────────
         st.markdown("---")

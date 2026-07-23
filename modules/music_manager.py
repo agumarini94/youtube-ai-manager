@@ -193,28 +193,35 @@ def sugerir_musica_claude(contexto: str) -> dict | None:
         return None
 
 
-def mezclar_musica(video: str, musica: str, salida: str, volumen: float = 0.15) -> bool:
+def mezclar_musica(video: str, musica: str, salida: str, volumen: float = 0.15,
+                   reemplazar_audio: bool = False) -> bool:
     """
     Agrega música de fondo a un video preservando el audio original.
     La música se loopea si es más corta que el video.
     volumen: fracción del volumen original del video (0.15 = 15%).
+    reemplazar_audio: si True, descarta el audio original y usa solo la música.
     """
     try:
+        if reemplazar_audio:
+            filter_complex = f"[1:a]volume={volumen}[aout]"
+        else:
+            filter_complex = (
+                f"[1:a]volume={volumen}[bg];"
+                "[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2[aout]"
+            )
         cmd = [
             FFMPEG,
             "-i", video,
             "-stream_loop", "-1", "-i", musica,
-            "-filter_complex",
-            (
-                f"[1:a]volume={volumen}[bg];"
-                "[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2[aout]"
-            ),
+            "-filter_complex", filter_complex,
             "-map", "0:v",
             "-map", "[aout]",
             "-c:v", "copy",
             "-c:a", "aac", "-b:a", "192k",
-            "-y", salida,
         ]
+        if reemplazar_audio:
+            cmd += ["-shortest"]
+        cmd += ["-y", salida]
         r = subprocess.run(cmd, capture_output=True, timeout=300)
         return (
             r.returncode == 0
