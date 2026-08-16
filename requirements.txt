@@ -21,6 +21,7 @@ python-dotenv>=1.0.1
 
 # HTTP requests
 requests>=2.31.0
+cloudscraper>=1.2.71  # resuelve el challenge de Cloudflare en tikwm.com/api/feed/search
 
 # Gráficos en Streamlit
 plotly>=5.20.0

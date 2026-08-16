@@ -49,6 +49,7 @@ from modules.selector_ia import (
     filtrar_por_seguidores,
     seleccionar_con_claude,
     info_desde_urls,
+    keywords_disponibles,
 )
 from modules.workflow import compilar_y_generar_seo, subir_a_youtube, postear_comentario_encuesta
 from modules.texto_video import TIPOS_TEXTO, FONDOS, generar_texto_claude, generar_fondo_local, crear_video_texto
@@ -98,6 +99,37 @@ PAISES = {
     "🇺🇸 EEUU":      "usa",
     "🇷🇺 Rusia":     "russia",
 }
+
+FILTROS_TIEMPO = {
+    "🕐 Últimas 24h":     24,
+    "🕑 Últimas 48h":     48,
+    "🕒 Últimas 72h":     72,
+    "📆 Última semana":   24 * 7,
+    "🗓️ Último mes":      24 * 30,
+    "♾️ No importa la fecha": None,
+}
+
+# Orden ascendente de ventanas (None = sin límite) — se usa para calcular
+# "la siguiente más amplia" cuando una búsqueda no encuentra resultados.
+_ORDEN_FILTRO_TIEMPO = [24, 48, 72, 24 * 7, 24 * 30, None]
+_SIN_SIGUIENTE = object()
+
+
+def _siguiente_filtro_horas(actual: int | None):
+    """Devuelve la próxima ventana más amplia después de `actual`.
+    Retorna el sentinel _SIN_SIGUIENTE si ya no hay ninguna más amplia."""
+    try:
+        idx = _ORDEN_FILTRO_TIEMPO.index(actual)
+    except ValueError:
+        idx = -1  # actual no está en la lista → tratar como el más angosto
+    if idx + 1 < len(_ORDEN_FILTRO_TIEMPO):
+        return _ORDEN_FILTRO_TIEMPO[idx + 1]
+    return _SIN_SIGUIENTE
+
+
+def _label_filtro_horas(horas: int | None) -> str:
+    """Etiqueta legible para un valor de horas, buscándolo en FILTROS_TIEMPO."""
+    return next((k for k, v in FILTROS_TIEMPO.items() if v == horas), "sin límite de fecha")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -446,6 +478,9 @@ async def _mostrar_cancion(bot: Bot, idx: int, msg_id: int | None = None):
 
 async def _preguntar_categoria(bot: Bot):
     """Muestra las categorías de búsqueda como botones inline (2 columnas)."""
+    datos = estado.leer()
+    vs_activo = bool(datos.get("vs_activo"))
+
     labels = list(CATEGORIAS.keys())
     filas = [
         [
@@ -454,8 +489,11 @@ async def _preguntar_categoria(bot: Bot):
         ],
         [
             InlineKeyboardButton("📷 Subir link de Instagram", callback_data="pegar_instagram"),
+            InlineKeyboardButton("📱 Enviar de TikTok",        callback_data="enviar_tiktok"),
         ],
     ]
+    if not vs_activo:
+        filas.append([InlineKeyboardButton("🆚 Modo Versus", callback_data="vs_iniciar")])
     for i in range(0, len(labels), 2):
         fila = []
         for label in labels[i:i+2]:
@@ -463,12 +501,46 @@ async def _preguntar_categoria(bot: Bot):
             fila.append(InlineKeyboardButton(label, callback_data=f"cat_{tag}"))
         filas.append(fila)
     teclado = InlineKeyboardMarkup(filas)
+
+    if vs_activo:
+        total = datos.get("vs_total_lados", 2)
+        lado_actual = datos.get("vs_lado_actual", 0) + 1
+        texto = f"🆚 <b>Versus — Lado {lado_actual}/{total}</b>\n¿Qué querés buscar para este lado?"
+    else:
+        texto = "¿Qué tipo de videos querés buscar?"
+
     await bot.send_message(
         chat_id=CHAT_ID,
-        text="¿Qué tipo de videos querés buscar?",
+        text=texto,
+        parse_mode="HTML" if vs_activo else None,
         reply_markup=teclado,
     )
     estado.actualizar(estado="eligiendo_categoria")
+
+
+async def cb_vs_iniciar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Pregunta cuántos lados va a tener el Versus."""
+    query = update.callback_query
+    await query.answer()
+    teclado = InlineKeyboardMarkup([[
+        InlineKeyboardButton("2 lados", callback_data="vs_lados_2"),
+        InlineKeyboardButton("4 lados", callback_data="vs_lados_4"),
+    ]])
+    await query.edit_message_text(
+        "🆚 <b>Modo Versus</b>\n¿Cuántos lados querés comparar? (ej: Messi 🆚 Cristiano Ronaldo)",
+        parse_mode="HTML",
+        reply_markup=teclado,
+    )
+
+
+async def cb_vs_lados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Arranca el modo Versus con la cantidad de lados elegida (pattern: ^vs_lados_)."""
+    query = update.callback_query
+    await query.answer()
+    total = int(query.data.split("_")[-1])
+    estado.actualizar(vs_activo=True, vs_total_lados=total, vs_lado_actual=0, vs_lados=[])
+    await query.edit_message_text(f"🆚 <b>Versus de {total} lados activado.</b>", parse_mode="HTML")
+    await _preguntar_categoria(ctx.bot)
 
 
 async def _preguntar_pais(bot: Bot):
@@ -487,6 +559,18 @@ async def _preguntar_pais(bot: Bot):
         reply_markup=InlineKeyboardMarkup(filas),
     )
     estado.actualizar(estado="eligiendo_pais")
+
+
+async def _preguntar_filtro_tiempo(bot: Bot):
+    """Última pregunta antes de buscar: qué tan reciente debe ser el contenido."""
+    labels = list(FILTROS_TIEMPO.keys())
+    filas = [[InlineKeyboardButton(label, callback_data=f"filtrotiempo_{label}")] for label in labels]
+    await bot.send_message(
+        chat_id=CHAT_ID,
+        text="⏳ ¿Qué tan reciente querés el contenido?",
+        reply_markup=InlineKeyboardMarkup(filas),
+    )
+    estado.actualizar(estado="eligiendo_filtro_tiempo")
 
 
 async def _iniciar_busqueda(bot: Bot):
@@ -515,9 +599,29 @@ async def _iniciar_busqueda(bot: Bot):
         None, lambda: buscar_hashtags(max_dur, tag, pais, max_horas=max_horas)
     )
 
+    if not keywords_disponibles():
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text="⚠️ Búsqueda por keywords no disponible (bloqueo de Cloudflare en tikwm.com). Resultados solo por hashtag.",
+        )
+
     _teclado_rebuscar = InlineKeyboardMarkup([[
         InlineKeyboardButton("🔄 Cambiar búsqueda", callback_data="buscar_otros"),
     ]])
+
+    def _teclado_sin_resultados() -> InlineKeyboardMarkup:
+        """Igual que _teclado_rebuscar, pero suma un botón para ampliar la ventana
+        de fecha si todavía queda una más amplia disponible."""
+        filas = [[InlineKeyboardButton("🔄 Cambiar búsqueda", callback_data="buscar_otros")]]
+        siguiente = _siguiente_filtro_horas(max_horas)
+        if siguiente is not _SIN_SIGUIENTE:
+            sufijo = str(siguiente) if siguiente is not None else "none"
+            texto_label = _label_filtro_horas(siguiente).split(" ", 1)[-1]
+            filas.append([InlineKeyboardButton(
+                f"🔎 Ampliar a {texto_label}",
+                callback_data=f"ampliarfiltro_{sufijo}",
+            )])
+        return InlineKeyboardMarkup(filas)
 
     if not candidatos:
         estado.actualizar(estado="eligiendo_categoria")
@@ -526,7 +630,7 @@ async def _iniciar_busqueda(bot: Bot):
             "Podés cambiar la búsqueda o pegar links:\n"
             "/urls https://tiktok.com/...",
             parse_mode="HTML",
-            reply_markup=_teclado_rebuscar,
+            reply_markup=_teclado_sin_resultados(),
         )
         return
 
@@ -545,7 +649,7 @@ async def _iniciar_busqueda(bot: Bot):
             "❌ <b>Sin resultados</b> — todos los videos son de cuentas con +2M seguidores.\n"
             "Probá con otra categoría o país.",
             parse_mode="HTML",
-            reply_markup=_teclado_rebuscar,
+            reply_markup=_teclado_sin_resultados(),
         )
         return
 
@@ -1359,6 +1463,41 @@ async def cb_pegar_links(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     estado.actualizar(estado="esperando_urls")
 
 
+async def cb_enviar_tiktok(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Activa el modo 'enviar videos de TikTok de a uno' (pattern: ^enviar_tiktok$)."""
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "📱 <b>Mandame los videos de TikTok</b>\n\n"
+        "Compartilos desde la app (de a uno, llegan como link). "
+        "Cuando termines, tocá el botón de compilar.",
+        parse_mode="HTML",
+    )
+    estado.actualizar(estado="esperando_tiktok", tiktok_pendientes=[], tiktok_msg_id=None)
+
+
+async def cb_tiktok_agregar_mas(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Ack visual — los videos ya se suman solos al llegar (pattern: ^tiktok_agregar_mas$)."""
+    query = update.callback_query
+    await query.answer("Seguí mandando videos 📱")
+
+
+async def cb_tiktok_listo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Cierra la carga de TikTok y pasa a aprobación de clips (pattern: ^tiktok_listo$).
+    Siempre usa la lista completa actual de `tiktok_pendientes`, sin importar desde
+    qué mensaje (viejo o nuevo) se haya tocado el botón."""
+    query = update.callback_query
+    datos = estado.leer()
+    clips = datos.get("tiktok_pendientes", [])
+    if not clips:
+        await query.answer("Todavía no mandaste ningún video.", show_alert=True)
+        return
+    await query.answer()
+    await query.edit_message_text(f"✅ {len(clips)} video(s) listos. Revisalos:")
+    estado.actualizar(estado="aprobacion_clips", clips=clips, tiktok_pendientes=[], tiktok_msg_id=None)
+    await _enviar_clips_para_aprobacion(ctx.bot, clips)
+
+
 async def _preguntar_subcategoria(bot: Bot, label: str):
     """Muestra los botones de subcategoría para una categoría dada."""
     subs = SUBCATEGORIAS[label]
@@ -1484,6 +1623,20 @@ async def cb_pais(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML",
     )
     estado.actualizar(pais_busqueda=sufijo)
+    await _preguntar_filtro_tiempo(ctx.bot)
+
+
+async def cb_filtro_tiempo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Handler para el botón de filtro de antigüedad (pattern: ^filtrotiempo_)."""
+    query = update.callback_query
+    await query.answer()
+    label = query.data[len("filtrotiempo_"):]
+    horas = FILTROS_TIEMPO.get(label)
+    await query.edit_message_text(
+        f"⏳ Antigüedad: <b>{html.escape(label)}</b>",
+        parse_mode="HTML",
+    )
+    estado.actualizar(max_horas_busqueda=horas)
     await _iniciar_busqueda(ctx.bot)
 
 
@@ -1568,12 +1721,73 @@ def _ordenar_clips_con_claude(clips: list[dict]) -> list[int] | None:
         return None
 
 
+async def _despues_de_ordenar_clips(bot: Bot):
+    """
+    Se llama al terminar de ordenar los clips de la búsqueda actual.
+    Si el modo Versus está activo, guarda este lado y pasa al siguiente
+    (o mergea todos los lados con puntos de transición y sigue a música
+    cuando ya se completaron todos). Fuera de Versus, sigue a música normal.
+    """
+    datos = estado.leer()
+    if not datos.get("vs_activo"):
+        await _preguntar_musica(bot)
+        return
+
+    lado_actual = datos.get("vs_lado_actual", 0)
+    total = datos.get("vs_total_lados", 2)
+    nombre_lado = datos.get("tag_busqueda") or f"Lado {lado_actual + 1}"
+    clips_lado = datos.get("clips", [])
+
+    lados = datos.get("vs_lados", [])
+    lados.append({"nombre": nombre_lado, "clips": clips_lado})
+
+    if lado_actual + 1 < total:
+        estado.actualizar(
+            vs_lado_actual=lado_actual + 1,
+            vs_lados=lados,
+            clips=[],
+            tag_busqueda=None,
+            pista_busqueda=None,
+            pais_busqueda=None,
+            max_horas_busqueda=None,
+            candidatos_pool=[],
+        )
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text=(
+                f"✅ Lado {lado_actual + 1}/{total} listo: <b>{html.escape(str(nombre_lado))}</b>\n\n"
+                f"Ahora elegí el lado {lado_actual + 2}/{total}:"
+            ),
+            parse_mode="HTML",
+        )
+        await _preguntar_categoria(bot)
+        return
+
+    # Último lado: mergear todos los bloques, tageando cada clip con su lado
+    # para que el compilador pueda insertar la transición en el punto correcto.
+    clips_final = []
+    for i, lado in enumerate(lados):
+        for c in lado["clips"]:
+            clip = dict(c)
+            clip["_vs_lado"] = i
+            clips_final.append(clip)
+
+    nombres = " 🆚 ".join(str(l["nombre"]) for l in lados)
+    estado.actualizar(clips=clips_final, vs_lados=lados)
+    await bot.send_message(
+        chat_id=CHAT_ID,
+        text=f"🆚 <b>Versus armado:</b> {html.escape(nombres)}\n\n{len(clips_final)} clips en total. Pasando a música...",
+        parse_mode="HTML",
+    )
+    await _preguntar_musica(bot)
+
+
 async def cb_orden_ok(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Mantiene el orden actual y sigue a música."""
+    """Mantiene el orden actual y sigue a música (o al siguiente lado si es Versus)."""
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("📋 Orden mantenido. Pasando a música...")
-    await _preguntar_musica(ctx.bot)
+    await query.edit_message_text("📋 Orden mantenido.")
+    await _despues_de_ordenar_clips(ctx.bot)
 
 
 async def cb_orden_claude(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1594,7 +1808,7 @@ async def cb_orden_claude(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             chat_id=CHAT_ID,
             text="⚠️ No pude determinar el orden. Usando el orden actual.",
         )
-        await _preguntar_musica(ctx.bot)
+        await _despues_de_ordenar_clips(ctx.bot)
         return
 
     clips_reordenados = [clips[i] for i in orden]
@@ -1606,10 +1820,10 @@ async def cb_orden_claude(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     await ctx.bot.send_message(
         chat_id=CHAT_ID,
-        text=f"✅ <b>Orden de Claude aplicado:</b>\n\n{lista}\n\nPasando a música...",
+        text=f"✅ <b>Orden de Claude aplicado:</b>\n\n{lista}",
         parse_mode="HTML",
     )
-    await _preguntar_musica(ctx.bot)
+    await _despues_de_ordenar_clips(ctx.bot)
 
 
 def _teclado_orden_manual(clips: list[dict], restantes: list[int], posicion: int) -> InlineKeyboardMarkup:
@@ -1682,10 +1896,10 @@ async def cb_orden_pick(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             for i, c in enumerate(clips_reordenados)
         )
         await query.edit_message_text(
-            f"✅ <b>Orden definido:</b>\n\n{lista}\n\nPasando a música...",
+            f"✅ <b>Orden definido:</b>\n\n{lista}",
             parse_mode="HTML",
         )
-        await _preguntar_musica(ctx.bot)
+        await _despues_de_ordenar_clips(ctx.bot)
         return
 
     ordinal = ["segundo", "tercero", "cuarto", "quinto", "sexto"][min(posicion - 1, 5)]
@@ -1704,6 +1918,17 @@ async def cb_buscar_otros(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("🔄 Cambiando categoría...")
     estado.actualizar(estado="idle")
     await _preguntar_categoria(ctx.bot)
+
+
+async def cb_ampliar_filtro(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Reintenta la misma búsqueda con una ventana de fecha más amplia (pattern: ^ampliarfiltro_)."""
+    query = update.callback_query
+    await query.answer()
+    sufijo = query.data[len("ampliarfiltro_"):]
+    horas = None if sufijo == "none" else int(sufijo)
+    await query.edit_message_text(f"🔎 Ampliando búsqueda a {_label_filtro_horas(horas)}...")
+    estado.actualizar(max_horas_busqueda=horas)
+    await _iniciar_busqueda(ctx.bot)
 
 
 async def cb_cambiar_clip(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1990,6 +2215,62 @@ async def handle_texto(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         estado.actualizar(estado="aprobacion_clips", clips=clips)
         await msg.edit_text(f"✅ ¡Encontré {len(clips)} clip(s)! Revisalos:")
         await _enviar_clips_para_aprobacion(ctx.bot, clips)
+        return
+
+    if est == "esperando_tiktok":
+        # El usuario comparte videos de TikTok de a uno desde la app.
+        import re
+        urls = re.findall(r'https?://\S+', texto)
+        if not urls:
+            await update.message.reply_text(
+                "❌ No encontré ningún link ahí. Compartí el video de nuevo desde TikTok."
+            )
+            return
+
+        loop = asyncio.get_event_loop()
+        nuevos = await loop.run_in_executor(None, info_desde_urls, urls)
+        if not nuevos:
+            await update.message.reply_text(
+                "❌ No pude obtener info de ese video. Probá compartirlo de nuevo."
+            )
+            return
+
+        pendientes = datos.get("tiktok_pendientes", [])
+        pendientes.extend(nuevos)
+        estado.actualizar(tiktok_pendientes=pendientes)
+
+        etiqueta_lado = ""
+        if datos.get("vs_activo"):
+            lado_actual = datos.get("vs_lado_actual", 0) + 1
+            total = datos.get("vs_total_lados", 2)
+            etiqueta_lado = f" del Lado {lado_actual}"
+            texto_listo = f"✔️ Lado {lado_actual}/{total} listo ({len(pendientes)})"
+        else:
+            texto_listo = f"🎬 Compilar ({len(pendientes)})"
+
+        texto_conf = (
+            f"✅ Video {len(pendientes)}{etiqueta_lado} agregado."
+            if len(nuevos) == 1
+            else f"✅ {len(nuevos)} videos agregados{etiqueta_lado} (total: {len(pendientes)})."
+        )
+        teclado = InlineKeyboardMarkup([[
+            InlineKeyboardButton("➕ Agregar más", callback_data="tiktok_agregar_mas"),
+            InlineKeyboardButton(texto_listo,      callback_data="tiktok_listo"),
+        ]])
+
+        msg_id = datos.get("tiktok_msg_id")
+        if msg_id:
+            try:
+                await ctx.bot.edit_message_text(
+                    chat_id=CHAT_ID, message_id=msg_id,
+                    text=texto_conf, reply_markup=teclado,
+                )
+                return
+            except Exception:
+                pass  # el mensaje anterior no se pudo editar (ej. borrado) — mandamos uno nuevo
+
+        msg = await update.message.reply_text(texto_conf, reply_markup=teclado)
+        estado.actualizar(tiktok_msg_id=msg.message_id)
         return
 
     if est != "esperando_hora_custom":
@@ -4945,16 +5226,23 @@ def crear_aplicacion() -> Application:
     app.add_handler(CallbackQueryHandler(cb_volumen,           pattern=r"^vol_\d+$"))
     app.add_handler(CallbackQueryHandler(cb_buscar_texto,   pattern="^buscar_texto$"))
     app.add_handler(CallbackQueryHandler(cb_pegar_links,    pattern="^pegar_links$"))
+    app.add_handler(CallbackQueryHandler(cb_enviar_tiktok,      pattern="^enviar_tiktok$"))
+    app.add_handler(CallbackQueryHandler(cb_tiktok_agregar_mas, pattern="^tiktok_agregar_mas$"))
+    app.add_handler(CallbackQueryHandler(cb_tiktok_listo,       pattern="^tiktok_listo$"))
+    app.add_handler(CallbackQueryHandler(cb_vs_iniciar,     pattern="^vs_iniciar$"))
+    app.add_handler(CallbackQueryHandler(cb_vs_lados,       pattern=r"^vs_lados_\d+$"))
     app.add_handler(CallbackQueryHandler(cb_categoria,         pattern="^cat_"))
     app.add_handler(CallbackQueryHandler(cb_subcategoria,      pattern="^sub_"))
     app.add_handler(CallbackQueryHandler(cb_sub_subcategoria,  pattern="^subsub_"))
     app.add_handler(CallbackQueryHandler(cb_pais,           pattern="^pais_"))
+    app.add_handler(CallbackQueryHandler(cb_filtro_tiempo,  pattern="^filtrotiempo_"))
     app.add_handler(CallbackQueryHandler(cb_aprobar_clips,  pattern="^aprobar_clips$"))
     app.add_handler(CallbackQueryHandler(cb_orden_ok,        pattern="^orden_ok$"))
     app.add_handler(CallbackQueryHandler(cb_orden_claude,    pattern="^orden_claude$"))
     app.add_handler(CallbackQueryHandler(cb_orden_manual,    pattern="^orden_manual$"))
     app.add_handler(CallbackQueryHandler(cb_orden_pick,      pattern=r"^orden_pick_\d+$"))
     app.add_handler(CallbackQueryHandler(cb_buscar_otros,   pattern="^buscar_otros$"))
+    app.add_handler(CallbackQueryHandler(cb_ampliar_filtro, pattern="^ampliarfiltro_"))
     app.add_handler(CallbackQueryHandler(cb_cambiar_clip,   pattern=r"^cambiar_\d+$"))
     app.add_handler(CallbackQueryHandler(cb_aprobar_seo,        pattern="^aprobar_seo$"))
     app.add_handler(CallbackQueryHandler(cb_subir_ahora,        pattern="^subir_ahora$"))

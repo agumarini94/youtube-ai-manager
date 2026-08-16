@@ -14,9 +14,32 @@ from pathlib import Path
 import anthropic
 import requests
 
+try:
+    import cloudscraper
+except ImportError:
+    cloudscraper = None
+
 logger = logging.getLogger(__name__)
 
 TIKWM = "https://www.tikwm.com/api/"
+
+# tikwm.com/api/feed/search quedó detrás de un challenge de Cloudflare que `requests`
+# no puede resolver. Se usa cloudscraper solo para ese endpoint (challenge/info y
+# challenge/posts siguen respondiendo bien con requests normal).
+_scraper = None
+_keywords_disponibles = True
+
+
+def _cloudscraper_session():
+    global _scraper
+    if _scraper is None and cloudscraper is not None:
+        _scraper = cloudscraper.create_scraper()
+    return _scraper
+
+
+def keywords_disponibles() -> bool:
+    """False si la última búsqueda por keywords (feed/search) falló (ej. bloqueo Cloudflare)."""
+    return _keywords_disponibles
 
 # Caché de seguidores persistido en disco para sobrevivir reinicios del bot
 _CACHE_SEG_FILE = Path(__file__).parent.parent / "data" / "cache_seguidores.json"
@@ -57,6 +80,8 @@ CATEGORIAS: dict[str, str] = {
     "🔥 Tendencias fútbol":         "general",
     "⚽ Goles épicos":              "goles",
     "🏆 Mundial 2026":             "mundial2026",
+    "🏆 Copa Libertadores":        "copalibertadores",
+    "🏆 Copa Sudamericana":        "copasudamericana",
     "🌟 Jugadas de crack":          "cracks",
     "😂 Fails de fútbol":           "futbolfails",
     "🥅 Atajadas increíbles":       "atajadas",
@@ -106,6 +131,60 @@ SUBCATEGORIAS: dict[str, dict[str, str | tuple]] = {
         ),
         "🔮 Pronósticos de hoy": "__pronosticos__",
     },
+    "🏆 Copa Libertadores": {
+        "Todos": "copalibertadores",
+        "📅 Partidos recientes": (
+            "copa libertadores partido hoy resultado",
+            "Preferir clips de partidos jugados recientemente: goles del día, resúmenes de encuentros recientes de la Libertadores, reacciones a resultados. Rechazar análisis pre-fecha o contenido de archivo de ediciones pasadas.",
+        ),
+        "⚽ Goles": (
+            "copa libertadores goles",
+            "Preferir goles con reacción de hinchada o jugadas espectaculares de la Copa Libertadores. Rechazar análisis de periodistas o comentarios de escritorio.",
+        ),
+        "👟 Patadas / Faltas": (
+            "copa libertadores faltas",
+            "Preferir patadas duras, faltas fuertes, tarjetas rojas y entradas violentas en la Copa Libertadores. Rechazar análisis tácticos o resúmenes de partido.",
+        ),
+        "🎵 Canciones / Himnos": (
+            "hinchadas cantando copa libertadores",
+            "SOLO videos de hinchas, tribunas o aficionados cantando en estadios, plazas o calles por la Libertadores. Rechazar videoclips musicales de artistas, cantantes o bandas.",
+        ),
+        "😂 Fails": (
+            "copa libertadores fails",
+            "Preferir errores graciosos, tropiezos, resbalar y situaciones vergonzosas de jugadores o árbitros en la Libertadores. Rechazar goles o jugadas buenas.",
+        ),
+        "🎉 Celebraciones": (
+            "copa libertadores celebraciones",
+            "Preferir festejos de gol con emoción extrema: llanto, saltos, abrazos, reacciones de hinchada en la Libertadores. Rechazar análisis o rueda de prensa.",
+        ),
+    },
+    "🏆 Copa Sudamericana": {
+        "Todos": "copasudamericana",
+        "📅 Partidos recientes": (
+            "copa sudamericana partido hoy resultado",
+            "Preferir clips de partidos jugados recientemente: goles del día, resúmenes de encuentros recientes de la Sudamericana, reacciones a resultados. Rechazar análisis pre-fecha o contenido de archivo de ediciones pasadas.",
+        ),
+        "⚽ Goles": (
+            "copa sudamericana goles",
+            "Preferir goles con reacción de hinchada o jugadas espectaculares de la Copa Sudamericana. Rechazar análisis de periodistas o comentarios de escritorio.",
+        ),
+        "👟 Patadas / Faltas": (
+            "copa sudamericana faltas",
+            "Preferir patadas duras, faltas fuertes, tarjetas rojas y entradas violentas en la Copa Sudamericana. Rechazar análisis tácticos o resúmenes de partido.",
+        ),
+        "🎵 Canciones / Himnos": (
+            "hinchadas cantando copa sudamericana",
+            "SOLO videos de hinchas, tribunas o aficionados cantando en estadios, plazas o calles por la Sudamericana. Rechazar videoclips musicales de artistas, cantantes o bandas.",
+        ),
+        "😂 Fails": (
+            "copa sudamericana fails",
+            "Preferir errores graciosos, tropiezos, resbalar y situaciones vergonzosas de jugadores o árbitros en la Sudamericana. Rechazar goles o jugadas buenas.",
+        ),
+        "🎉 Celebraciones": (
+            "copa sudamericana celebraciones",
+            "Preferir festejos de gol con emoción extrema: llanto, saltos, abrazos, reacciones de hinchada en la Sudamericana. Rechazar análisis o rueda de prensa.",
+        ),
+    },
     "⚽ Goles épicos": {
         "Todos": "goles",
         "💥 Golazos": (
@@ -123,6 +202,10 @@ SUBCATEGORIAS: dict[str, dict[str, str | tuple]] = {
         "🎯 De volea": (
             "volea gol futbol",
             "SOLO goles de volea o de primera sin que bote. Rechazar goles con control previo.",
+        ),
+        "🐐 Ídolos": (
+            "golazos historicos futbol",
+            "Preferir golazos de ídolos históricos y actuales del fútbol mundial con gran factura técnica. Rechazar goles genéricos sin jugador reconocible.",
         ),
     },
     "🏅 Champions League": {
@@ -161,6 +244,26 @@ SUBCATEGORIAS: dict[str, dict[str, str | tuple]] = {
         "⚽ Primera División": (
             "ligaargentina futbol",
             "Preferir goles y jugadas de la Liga Profesional Argentina. Rechazar selecciones nacionales o torneos internacionales.",
+        ),
+        "📰 Noticias": (
+            "noticias futbol argentino",
+            "Preferir contenido informativo: anuncios, comunicados y noticias de clubes o selección argentina. Rechazar goles o jugadas sin contexto informativo.",
+        ),
+        "📅 Partidos recientes": (
+            "futbol argentino partido hoy resultado",
+            "Preferir resúmenes y jugadas de partidos jugados recientemente en el fútbol argentino. Rechazar contenido de archivo o temporadas pasadas.",
+        ),
+        "🔥 Polémicas": (
+            "polemica futbol argentino arbitraje",
+            "Preferir polémicas arbitrales, peleas y escándalos en el fútbol argentino. Rechazar jugadas normales sin controversia.",
+        ),
+        "⚽ Goles": (
+            "goles futbol argentino",
+            "Preferir goles del fútbol argentino (clubes y selección) con buena factura o reacción de hinchada. Rechazar contenido sin gol.",
+        ),
+        "📋 Resúmenes": (
+            "resumen futbol argentino highlights",
+            "Preferir resúmenes cortos de partidos del fútbol argentino con los momentos más importantes. Rechazar análisis largos o pre-partido.",
         ),
     },
     "😂 Fails de fútbol": {
@@ -220,6 +323,199 @@ SUBCATEGORIAS: dict[str, dict[str, str | tuple]] = {
             "SOLO contenido de la Selección Española. Rechazar clubes españoles.",
         ),
     },
+    "🔥 Tendencias fútbol": {
+        "Todos": "general",
+        "📰 Noticias del día": (
+            "futbol noticias hoy",
+            "Preferir noticias y anuncios recientes del mundo del fútbol. Rechazar contenido de archivo o sin relación con noticias actuales.",
+        ),
+        "💰 Fichajes / Mercado": (
+            "fichajes futbol mercado",
+            "Preferir contenido sobre fichajes, traspasos y mercado de pases. Rechazar goles o jugadas sin relación con transferencias.",
+        ),
+        "🤔 Rumores": (
+            "rumores futbol fichajes",
+            "Preferir rumores y especulaciones sobre posibles fichajes o cambios en el fútbol. Rechazar noticias confirmadas o jugadas de partido.",
+        ),
+        "🧐 Curiosidades": (
+            "curiosidades futbol datos",
+            "Preferir datos curiosos, estadísticas llamativas y anécdotas del mundo del fútbol. Rechazar jugadas de partido sin contexto informativo.",
+        ),
+    },
+    "🌟 Jugadas de crack": {
+        "Todos": "cracks",
+        "🌀 Gambetas / Regates": (
+            "gambeta regate futbol",
+            "SOLO gambetas y regates espectaculares dejando rivales en el camino. Rechazar goles sin gambeta previa.",
+        ),
+        "🎯 Asistencias": (
+            "asistencia gol futbol",
+            "SOLO pases y asistencias de gol de gran nivel. Rechazar el gol en sí sin mostrar la jugada previa.",
+        ),
+        "🕳️ Nutmegs / Túneles": (
+            "nutmeg tunel futbol",
+            "SOLO caños, túneles y nutmegs a rivales. Rechazar jugadas sin caño.",
+        ),
+        "🎪 Jugadas de área chica": (
+            "jugada crack area chica futbol",
+            "SOLO jugadas de habilidad dentro del área rival: sombrero, taco, jugada individual. Rechazar jugadas de mitad de cancha.",
+        ),
+    },
+    "🥅 Atajadas increíbles": {
+        "Todos": "atajadas",
+        "🧤 Atajadas de penal": (
+            "atajada penal arquero",
+            "SOLO atajadas de penal. Rechazar atajadas de jugadas abiertas.",
+        ),
+        "🕊️ Palomas": (
+            "paloma atajada arquero",
+            "SOLO atajadas tipo 'paloma' (salto horizontal estirado). Rechazar atajadas comunes sin vuelo espectacular.",
+        ),
+        "⚡ Reflejos": (
+            "atajada reflejos arquero",
+            "SOLO atajadas de reflejo a corta distancia o rebotes. Rechazar atajadas de penal.",
+        ),
+        "🆚 Uno contra uno": (
+            "arquero mano a mano gol",
+            "SOLO situaciones de arquero mano a mano contra el delantero. Rechazar atajadas de disparos de media o larga distancia.",
+        ),
+    },
+    "🔥 Highlights": {
+        "Todos": "footballhighlights",
+        "📋 Resumen de partido": (
+            "resumen partido futbol highlights",
+            "Preferir resúmenes completos de un partido puntual con los momentos clave. Rechazar compilados de varios partidos distintos.",
+        ),
+        "📆 Mejores jugadas de la fecha": (
+            "mejores jugadas fecha futbol",
+            "Preferir compilados de las mejores jugadas de una jornada o fecha de torneo. Rechazar resumen de un solo partido.",
+        ),
+        "🏆 Top goles de la semana": (
+            "top goles semana futbol",
+            "Preferir rankings o compilados de los mejores goles de la semana. Rechazar contenido sin ranking o selección de mejores.",
+        ),
+    },
+    "⚡ Fútbol callejero": {
+        "Todos": "freestylesoccer",
+        "🤹 Freestyle": (
+            "freestyle futbol trucos",
+            "SOLO trucos de freestyle con pelota (malabares, control). Rechazar partidos o jugadas de cancha formal.",
+        ),
+        "🕳️ Panna / Caños en la calle": (
+            "panna street football",
+            "SOLO caños y jugadas de panna en fútbol callejero. Rechazar jugadas de cancha de 11.",
+        ),
+        "👶 Baby fútbol": (
+            "baby futbol gambeta",
+            "Preferir jugadas de baby fútbol / fútbol 5 en canchas chicas. Rechazar fútbol de cancha grande.",
+        ),
+        "🥇 Desafíos 1v1": (
+            "desafio 1v1 futbol calle",
+            "SOLO desafíos uno contra uno callejeros. Rechazar partidos formales de equipo.",
+        ),
+    },
+    "💥 Momentos épicos": {
+        "Todos": "futbolmoments",
+        "🔄 Remontadas": (
+            "remontada futbol",
+            "SOLO remontadas donde un equipo revierte una desventaja grande. Rechazar victorias sin desventaja previa.",
+        ),
+        "⏱️ Últimos minutos": (
+            "gol ultimo minuto futbol",
+            "SOLO goles o jugadas decisivas en los últimos minutos o tiempo añadido. Rechazar goles en tiempo normal sin urgencia.",
+        ),
+        "🎬 Debuts históricos": (
+            "debut historico futbol",
+            "SOLO debuts destacados de jugadores en su club o selección. Rechazar jugadas sin relación con un debut.",
+        ),
+        "😢 Retiros emotivos": (
+            "retiro emotivo futbolista",
+            "SOLO despedidas y retiros emotivos de jugadores. Rechazar contenido sin relación con un retiro.",
+        ),
+    },
+    "🤣 Reacciones de hinchas": {
+        "Todos": "fansreactions",
+        "🎉 Festejos": (
+            "hinchas festejando gol",
+            "Preferir festejos de gol de hinchas con emoción extrema. Rechazar reacciones de bronca o enojo.",
+        ),
+        "😡 Bronca / Enojo": (
+            "hinchas enojados futbol",
+            "Preferir reacciones de bronca, enojo o decepción de hinchas. Rechazar festejos.",
+        ),
+        "🎥 Streamers reaccionando": (
+            "streamer reaccion futbol gol",
+            "SOLO streamers o creadores de contenido reaccionando en cámara a jugadas de fútbol. Rechazar reacciones de hinchas en la tribuna.",
+        ),
+    },
+    "👦 Jóvenes talentos": {
+        "Todos": "youngtalents",
+        "🌎 Promesas Sudamérica": (
+            "promesa futbol sudamericano joven",
+            "SOLO jóvenes talentos y promesas de clubes o selecciones sudamericanas. Rechazar jugadores europeos.",
+        ),
+        "🌍 Promesas Europa": (
+            "promesa futbol europeo joven",
+            "SOLO jóvenes talentos y promesas de clubes o selecciones europeas. Rechazar jugadores sudamericanos.",
+        ),
+        "🎓 Categorías juveniles": (
+            "futbol juvenil sub17 sub20",
+            "Preferir jugadas de categorías juveniles (Sub-15 a Sub-20) de clubes o selecciones. Rechazar primera división.",
+        ),
+    },
+    "🇧🇷 Fútbol brasileño": {
+        "Todos": "futbolbrasil",
+        "🔴⚫ Flamengo": (
+            "flamengo futbol",
+            "SOLO contenido de Flamengo: goles y jugadas. Rechazar otros clubes brasileños.",
+        ),
+        "🟢⚪ Palmeiras": (
+            "palmeiras futbol",
+            "SOLO contenido de Palmeiras: goles y jugadas. Rechazar otros clubes brasileños.",
+        ),
+        "🇧🇷 Selección Brasil": (
+            "selecao brasil futbol",
+            "SOLO contenido de la Selección Brasileña. Rechazar clubes brasileños.",
+        ),
+        "🏆 Brasileirão general": (
+            "brasileirao futbol",
+            "Preferir goles y jugadas del Brasileirão en general sin enfocarse en un solo equipo.",
+        ),
+    },
+    "🏟️ Ambientes de estadio": {
+        "Todos": "estadio",
+        "🎪 Previas / Banderazos": (
+            "banderazo previa futbol estadio",
+            "SOLO previas de partido y banderazos de hinchada antes de ingresar al estadio. Rechazar contenido dentro del partido.",
+        ),
+        "🎭 Coreografías": (
+            "coreografia hinchada estadio futbol",
+            "SOLO coreografías visuales de la hinchada en la tribuna. Rechazar cánticos sin coreografía visual.",
+        ),
+        "🎤 Cánticos": (
+            "cantitos hinchada futbol estadio",
+            "SOLO cánticos y cantitos de hinchada en el estadio. Rechazar coreografías visuales sin canto.",
+        ),
+        "🆚 Clásicos / Derbis": (
+            "clasico derbi futbol hinchada",
+            "Preferir ambiente de clásicos o derbis históricos entre rivales. Rechazar partidos sin rivalidad histórica.",
+        ),
+    },
+    "💪 Entrenamiento de jugadores": {
+        "Todos": "futboltraining",
+        "🏋️ Rutinas físicas": (
+            "entrenamiento fisico futbolista",
+            "Preferir rutinas de entrenamiento físico y preparación de futbolistas. Rechazar entrenamiento técnico con pelota.",
+        ),
+        "⚽ Trucos / Malabares": (
+            "trucos malabares futbol entrenamiento",
+            "SOLO trucos, malabares y ejercicios de control de pelota en entrenamiento. Rechazar preparación física sin pelota.",
+        ),
+        "🧤 Entrenamiento de arqueros": (
+            "entrenamiento arquero futbol",
+            "SOLO ejercicios y entrenamiento específico de arqueros. Rechazar entrenamiento de jugadores de campo.",
+        ),
+    },
 }
 
 # Tercer nivel: sub-subcategorías por subcategoría específica.
@@ -254,6 +550,102 @@ SUB_SUBCATEGORIAS: dict[str, dict[str, dict[str, str | tuple]]] = {
             "📋 Resúmenes": (
                 "mundial 2026 resumen partido hoy highlights",
                 "Preferir resúmenes cortos de partidos recientes con los momentos más importantes. Rechazar análisis pre-partido o predicciones.",
+            ),
+        },
+    },
+    "🏆 Copa Libertadores": {
+        "📅 Partidos recientes": {
+            "Todos": (
+                "copa libertadores partido hoy resultado",
+                "Preferir clips de partidos jugados recientemente. Rechazar análisis pre-fecha o contenido de archivo.",
+            ),
+            "⚽ Goles": (
+                "copa libertadores goles partido hoy",
+                "SOLO goles convertidos en partidos recientes de la Libertadores. Preferir goles con reacción de hinchada. Rechazar análisis o goles de entrenamientos.",
+            ),
+            "👟 Faltas / Tarjetas": (
+                "copa libertadores faltas tarjeta partido hoy",
+                "Preferir faltas fuertes, tarjetas rojas y entradas violentas de partidos recientes. Rechazar resúmenes generales sin jugada específica.",
+            ),
+            "🎵 Hinchadas": (
+                "copa libertadores hinchadas estadio partido hoy",
+                "SOLO videos de hinchas y ambiente en el estadio durante partidos recientes. Rechazar videoclips musicales o contenido fuera del estadio.",
+            ),
+            "😂 Fails": (
+                "copa libertadores fails error partido hoy",
+                "Preferir errores graciosos, tropiezos y situaciones vergonzosas en partidos recientes. Rechazar goles o jugadas buenas.",
+            ),
+            "🎉 Celebraciones": (
+                "copa libertadores celebracion gol partido hoy",
+                "Preferir festejos de gol con emoción extrema en partidos recientes: llanto, saltos, abrazos. Rechazar análisis o rueda de prensa.",
+            ),
+            "📋 Resúmenes": (
+                "copa libertadores resumen partido hoy highlights",
+                "Preferir resúmenes cortos de partidos recientes con los momentos más importantes. Rechazar análisis pre-partido o predicciones.",
+            ),
+        },
+    },
+    "🏆 Copa Sudamericana": {
+        "📅 Partidos recientes": {
+            "Todos": (
+                "copa sudamericana partido hoy resultado",
+                "Preferir clips de partidos jugados recientemente. Rechazar análisis pre-fecha o contenido de archivo.",
+            ),
+            "⚽ Goles": (
+                "copa sudamericana goles partido hoy",
+                "SOLO goles convertidos en partidos recientes de la Sudamericana. Preferir goles con reacción de hinchada. Rechazar análisis o goles de entrenamientos.",
+            ),
+            "👟 Faltas / Tarjetas": (
+                "copa sudamericana faltas tarjeta partido hoy",
+                "Preferir faltas fuertes, tarjetas rojas y entradas violentas de partidos recientes. Rechazar resúmenes generales sin jugada específica.",
+            ),
+            "🎵 Hinchadas": (
+                "copa sudamericana hinchadas estadio partido hoy",
+                "SOLO videos de hinchas y ambiente en el estadio durante partidos recientes. Rechazar videoclips musicales o contenido fuera del estadio.",
+            ),
+            "😂 Fails": (
+                "copa sudamericana fails error partido hoy",
+                "Preferir errores graciosos, tropiezos y situaciones vergonzosas en partidos recientes. Rechazar goles o jugadas buenas.",
+            ),
+            "🎉 Celebraciones": (
+                "copa sudamericana celebracion gol partido hoy",
+                "Preferir festejos de gol con emoción extrema en partidos recientes: llanto, saltos, abrazos. Rechazar análisis o rueda de prensa.",
+            ),
+            "📋 Resúmenes": (
+                "copa sudamericana resumen partido hoy highlights",
+                "Preferir resúmenes cortos de partidos recientes con los momentos más importantes. Rechazar análisis pre-partido o predicciones.",
+            ),
+        },
+    },
+    "⚽ Goles épicos": {
+        "🐐 Ídolos": {
+            "Todos": (
+                "golazos historicos futbol",
+                "Preferir golazos de ídolos históricos y actuales del fútbol mundial con gran factura técnica. Rechazar goles genéricos sin jugador reconocible.",
+            ),
+            "Messi": (
+                "messi goles",
+                "SOLO goles y jugadas de Lionel Messi. Rechazar contenido de otros jugadores.",
+            ),
+            "Cristiano Ronaldo": (
+                "cristiano ronaldo goles",
+                "SOLO goles y jugadas de Cristiano Ronaldo. Rechazar contenido de otros jugadores.",
+            ),
+            "Ronaldinho": (
+                "ronaldinho gaucho goles",
+                "SOLO goles, gambetas y jugadas de Ronaldinho Gaúcho. Rechazar contenido de otros jugadores.",
+            ),
+            "Maradona": (
+                "diego maradona goles",
+                "SOLO goles y jugadas de Diego Maradona. Rechazar contenido de otros jugadores.",
+            ),
+            "Zidane": (
+                "zinedine zidane goles",
+                "SOLO goles y jugadas de Zinedine Zidane. Rechazar contenido de otros jugadores.",
+            ),
+            "📼 Históricos": (
+                "goles historicos futbol retro",
+                "Preferir goles de leyendas retiradas del fútbol (Pelé, Cruyff, Di Stéfano, etc.) en formato archivo/retro. Rechazar jugadores en actividad.",
             ),
         },
     },
@@ -408,14 +800,25 @@ def _buscar_hashtag(tag: str, cantidad: int = 20) -> list[dict]:
 
 
 def _buscar_keywords(query: str, cantidad: int = 20) -> list[dict]:
-    """Busca videos por palabra clave via tikwm feed/search (complementa hashtags)."""
+    """Busca videos por palabra clave via tikwm feed/search (complementa hashtags).
+    Usa cloudscraper porque este endpoint quedó protegido por un challenge de Cloudflare
+    que `requests` no puede resolver. Si falla, marca `_keywords_disponibles=False`
+    para que el llamador pueda avisar que la búsqueda siguió solo por hashtag."""
+    global _keywords_disponibles
+    scraper = _cloudscraper_session()
+    if scraper is None:
+        _keywords_disponibles = False
+        return []
     try:
-        r = requests.post(
+        r = scraper.post(
             "https://www.tikwm.com/api/feed/search",
             data={"keywords": query, "count": cantidad, "cursor": 0},
             headers=_HEADERS,
-            timeout=15,
+            timeout=20,
         )
+        if r.status_code != 200:
+            _keywords_disponibles = False
+            return []
         data = r.json()
         if data.get("code") != 0:
             return []
@@ -456,6 +859,7 @@ def _buscar_keywords(query: str, cantidad: int = 20) -> list[dict]:
             })
         return videos
     except Exception:
+        _keywords_disponibles = False
         return []
 
 
@@ -639,6 +1043,9 @@ def buscar_hashtags(max_duracion: int = 60, tag: str | None = None, pais: str | 
     # Para reels (max_duracion ≤ 30s), buscamos con límite relajado para tener más candidatos.
     # La compilación se encarga de recortar cada clip a max_duracion al normalizar.
     max_dur_busqueda = max_duracion if max_duracion > 30 else 60
+
+    global _keywords_disponibles
+    _keywords_disponibles = True  # se marca False dentro de _buscar_keywords si falla
 
     historial = cargar_historial()
     candidatos: list[dict] = []

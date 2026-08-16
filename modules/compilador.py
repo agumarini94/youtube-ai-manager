@@ -76,11 +76,36 @@ def normalizar_video(entrada: str, salida: str, ancho: int, alto: int,
     return ok, err
 
 
+def generar_clip_transicion_vs(ancho: int, alto: int, salida: str, duracion: float = 0.5) -> tuple[bool, str]:
+    """Genera un flash rojo corto para separar bloques en compilaciones Versus.
+    (El ffmpeg de este entorno no tiene 'drawtext' compilado, por eso el efecto
+    es un flash de color en vez de texto "VS" superpuesto.)
+    Mismo codec/fps/resolución que normalizar_video() para poder concatenarse sin reencode."""
+    mitad = duracion / 2
+    vf = (
+        f"color=c=red:s={ancho}x{alto}:d={duracion}:r=30,"
+        f"fade=t=in:st=0:d={mitad}:color=black,"
+        f"fade=t=out:st={mitad}:d={mitad}:color=black"
+    )
+    return run_ffmpeg([
+        FFMPEG,
+        "-f", "lavfi", "-i", vf,
+        "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=stereo:d={duracion}",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-c:a", "aac", "-b:a", "128k",
+        "-r", "30", "-shortest",
+        "-y", salida,
+    ])
+
+
 def concatenar_clips(rutas: list[str], salida: str, ancho: int, alto: int,
-                     max_seg_por_clip: int | None = None) -> tuple[bool, str]:
+                     max_seg_por_clip: int | None = None,
+                     puntos_transicion: list[int] | None = None) -> tuple[bool, str]:
     """
     Normaliza todos los clips al mismo formato y los concatena.
     max_seg_por_clip: si se indica, recorta cada clip a esa duración (útil para reels).
+    puntos_transicion: índices (sobre `rutas`) antes de los cuales insertar un efecto
+    visual de transición (usado por el modo Versus para separar bloques de clips).
     Siempre re-encoda antes del concat para evitar problemas de codec mixto.
     """
     d = Path(salida).parent
@@ -99,9 +124,18 @@ def concatenar_clips(rutas: list[str], salida: str, ancho: int, alto: int,
     if not videos_norm:
         return False, "No se pudo procesar ningún clip."
 
+    transicion = None
+    if puntos_transicion:
+        transicion = str(norm_dir / "transicion_vs.mp4")
+        ok_t, err_t = generar_clip_transicion_vs(ancho, alto, transicion)
+        if not ok_t:
+            return False, f"Error generando transición Versus: {err_t}"
+
     lista = str(d / "lista_concat.txt")
     with open(lista, "w") as f:
-        for ruta in videos_norm:
+        for i, ruta in enumerate(videos_norm):
+            if transicion and i in puntos_transicion:
+                f.write(f"file '{transicion}'\n")
             f.write(f"file '{ruta}'\n")
 
     return run_ffmpeg([

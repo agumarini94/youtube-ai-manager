@@ -211,6 +211,14 @@ def compilar_y_generar_seo(clips: list[dict], formato: str = "video", progress_c
     if len(descargados) < 1:
         return {"ok": False, "error": "No se pudo descargar ningún clip. Verificá las URLs e intentá de nuevo."}
 
+    # Modo Versus: cada clip trae "_vs_lado" (índice de lado). Se recalculan los
+    # puntos de corte sobre `descargados` (no sobre `clips`) porque algunas descargas
+    # pueden fallar y correr los índices originales.
+    puntos_transicion = [
+        i for i in range(1, len(descargados))
+        if descargados[i].get("_vs_lado") != descargados[i - 1].get("_vs_lado")
+    ] if any(c.get("_vs_lado") is not None for c in descargados) else []
+
     tipo_label = "Short vertical (1080×1920)" if dual else f"{ancho}×{alto}"
     notify(f"✂️ <b>Paso {paso}/{total} — Compilando {len(descargados)} clips ({tipo_label})...</b>\n<i>Esto tarda 1-3 min según el largo</i>")
     paso += 1
@@ -218,7 +226,8 @@ def compilar_y_generar_seo(clips: list[dict], formato: str = "video", progress_c
     rutas = [c["ruta"] for c in descargados]
     # Para reels/ambos: recortar cada clip a 15s — YouTube Shorts distribuye mejor bajo 60s total
     max_seg_clip = 15 if formato in ("reel", "ambos") else None
-    ok, err = concatenar_clips(rutas, salida, ancho, alto, max_seg_por_clip=max_seg_clip)
+    ok, err = concatenar_clips(rutas, salida, ancho, alto, max_seg_por_clip=max_seg_clip,
+                               puntos_transicion=puntos_transicion)
     if not ok:
         return {"ok": False, "error": f"Error en compilación: {err}"}
 
@@ -228,14 +237,14 @@ def compilar_y_generar_seo(clips: list[dict], formato: str = "video", progress_c
         notify(f"📺 <b>Paso {paso}/{total} — Compilando versión horizontal (1920×1080) para YouTube Video...</b>")
         paso += 1
         salida_h = os.path.join(carpeta_tmp, "compilacion_horizontal.mp4")
-        ok_h, _ = concatenar_clips(rutas, salida_h, 1920, 1080)
+        ok_h, _ = concatenar_clips(rutas, salida_h, 1920, 1080, puntos_transicion=puntos_transicion)
         if ok_h and Path(salida_h).exists():
             video_horizontal = salida_h
 
     # Teaser hook: Claude encuentra el momento más impactante y lo pone al inicio.
     # Solo para videos largos — en Shorts/Reels no se aplica porque agregar 5s extra
     # puede superar el límite de 60s y YouTube deja de clasificarlo como Short.
-    if not dual and formato not in ("reel", "ambos"):
+    if not dual and formato not in ("reel", "ambos") and not puntos_transicion:
         notify(f"⚡ <b>Paso {paso}/{total} — Claude buscando el mejor hook para los primeros 5 segundos...</b>")
         paso += 1
         try:
