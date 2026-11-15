@@ -17,7 +17,6 @@ from modules.content_gen import mostrar_generador_contenido
 from modules.voice_gen import mostrar_generador_voz
 from modules.uploader import mostrar_subidor
 from modules.downloader import mostrar_descargador
-from modules.proceso import mostrar_proceso
 from modules.sync_audio import mostrar_sync_audio
 from modules.seo_gen import mostrar_seo_gen
 from modules.video_editor import mostrar_video_editor
@@ -86,7 +85,6 @@ with st.sidebar:
     if "modulo_activo" not in st.session_state:
         st.session_state.modulo_activo = "Feed TikTok"
 
-    # Botón destacado para el proceso guiado
     st.markdown("### 🚀 Flujo principal")
     if st.button("📱 Feed de TikTok", key="btn_feed", use_container_width=True):
         st.session_state.modulo_activo = "Feed TikTok"
@@ -117,7 +115,6 @@ with st.sidebar:
         "✍️ Generador de Contenido": "Generador de Contenido",
         "🎙️ Generador de Voz": "Generador de Voz",
         "⬇️ Descargador de Videos": "Descargador de Videos",
-        "🎯 Proceso Guiado": "Proceso Guiado",
     }
 
     for label, nombre in modulos.items():
@@ -166,9 +163,6 @@ elif modulo == "Compilador":
 
 elif modulo == "Generador de Thumbnail":
     mostrar_thumbnail_gen()
-
-elif modulo == "Proceso Guiado":
-    mostrar_proceso()
 
 elif modulo == "Analizador de Canal":
     mostrar_analizador()

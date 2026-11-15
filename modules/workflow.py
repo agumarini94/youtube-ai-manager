@@ -524,29 +524,19 @@ def generar_recomendacion_horario(categoria: str | None = None) -> dict:
 def subir_a_youtube(ruta_video: str, seo: dict, fecha_publicacion: str | None = None, thumbnail: str | None = None) -> str | None:
     """Sube el video a YouTube. Retorna la URL o None si falla."""
     try:
-        from google.oauth2.credentials import Credentials
-        from google.auth.transport.requests import Request
         from googleapiclient.discovery import build
         from googleapiclient.http import MediaFileUpload
     except ImportError:
         return None
 
-    token_file = Path(__file__).parent.parent / "token_youtube.json"
-    if not token_file.exists():
+    from modules import youtube_auth
+
+    if not youtube_auth.hay_token():
         raise RuntimeError("No se encontró token_youtube.json — autenticá desde Streamlit primero.")
 
     try:
-        scopes = [
-            "https://www.googleapis.com/auth/youtube.upload",
-            "https://www.googleapis.com/auth/youtube.force-ssl",
-            "https://www.googleapis.com/auth/youtube.readonly",
-        ]
-        creds = Credentials.from_authorized_user_file(str(token_file), scopes)
-        if creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            with open(token_file, "w") as f:
-                f.write(creds.to_json())
-        if not creds.valid:
+        creds = youtube_auth.cargar_credenciales()
+        if not creds:
             raise RuntimeError("Credenciales de YouTube inválidas o expiradas — reautenticá desde Streamlit.")
 
         youtube = build("youtube", "v3", credentials=creds)
@@ -622,26 +612,16 @@ def postear_comentario_encuesta(video_id: str, encuesta: dict) -> bool:
     if not texto:
         return False
     try:
-        from google.oauth2.credentials import Credentials
-        from google.auth.transport.requests import Request
         from googleapiclient.discovery import build
     except ImportError:
         return False
 
-    token_file = Path(__file__).parent.parent / "token_youtube.json"
-    if not token_file.exists():
-        return False
+    from modules import youtube_auth
+
     try:
-        scopes = [
-            "https://www.googleapis.com/auth/youtube.upload",
-            "https://www.googleapis.com/auth/youtube.readonly",
-            "https://www.googleapis.com/auth/youtube.force-ssl",
-        ]
-        creds = Credentials.from_authorized_user_file(str(token_file), scopes)
-        if creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            with open(token_file, "w") as f:
-                f.write(creds.to_json())
+        creds = youtube_auth.cargar_credenciales()
+        if not creds:
+            return False
         youtube = build("youtube", "v3", credentials=creds)
         youtube.commentThreads().insert(
             part="snippet",

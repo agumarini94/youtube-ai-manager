@@ -955,28 +955,10 @@ def _youtube_conectado() -> bool:
     si hace falta (mismo patrón que workflow.subir_a_youtube). No lanza excepciones:
     devuelve False ante cualquier problema (token ausente, inválido, libs faltantes, etc).
     """
-    try:
-        from google.oauth2.credentials import Credentials
-        from google.auth.transport.requests import Request
-    except ImportError:
-        return False
-
-    token_file = Path(__file__).parent.parent / "token_youtube.json"
-    if not token_file.exists():
-        return False
+    from modules import youtube_auth
 
     try:
-        scopes = [
-            "https://www.googleapis.com/auth/youtube.upload",
-            "https://www.googleapis.com/auth/youtube.force-ssl",
-            "https://www.googleapis.com/auth/youtube.readonly",
-        ]
-        creds = Credentials.from_authorized_user_file(str(token_file), scopes)
-        if creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            with open(token_file, "w") as f:
-                f.write(creds.to_json())
-        return bool(creds.valid)
+        return youtube_auth.cargar_credenciales() is not None
     except Exception:
         return False
 
@@ -1060,30 +1042,16 @@ async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📊 Obteniendo estadísticas del canal...", parse_mode="HTML")
 
     try:
-        from pathlib import Path as _Path
-        from google.oauth2.credentials import Credentials
-        from google.auth.transport.requests import Request
-        from googleapiclient.discovery import build
+        from modules import youtube_auth
 
-        token_file = _Path(__file__).parent.parent / "token_youtube.json"
-        if not token_file.exists():
+        if not youtube_auth.hay_token():
             await update.message.reply_text("❌ No hay token de YouTube. Autenticá desde Streamlit primero.")
             return
 
-        scopes = [
-            "https://www.googleapis.com/auth/youtube.upload",
-            "https://www.googleapis.com/auth/youtube.readonly",
-        ]
-        creds = Credentials.from_authorized_user_file(str(token_file), scopes)
-        if creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            with open(token_file, "w") as f:
-                f.write(creds.to_json())
-        if not creds.valid:
+        yt = youtube_auth.cliente_youtube()
+        if yt is None:
             await update.message.reply_text("❌ Credenciales de YouTube inválidas. Reautenticá desde Streamlit.")
             return
-
-        yt = build("youtube", "v3", credentials=creds)
 
         # Obtener el canal propio
         canal = yt.channels().list(part="id,snippet", mine=True).execute()
@@ -5384,20 +5352,6 @@ def crear_aplicacion() -> Application:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_texto))
 
     return app
-
-
-async def ejecutar_workflow_automatico(bot: Bot):
-    """Llamado por el scheduler. Inicia el workflow si está idle."""
-    datos = estado.leer()
-    if datos["estado"] != "idle":
-        await bot.send_message(
-            chat_id=CHAT_ID,
-            text=f"⚠️ Workflow automático cancelado — proceso activo: `{datos['estado']}`",
-            parse_mode="Markdown",
-        )
-        return
-    await bot.send_message(chat_id=CHAT_ID, text="🤖 Iniciando workflow automático...")
-    await _preguntar_formato(bot)
 
 
 async def ejecutar_autopilot(bot: Bot):

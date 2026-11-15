@@ -50,9 +50,6 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 if not TELEGRAM_CHAT_ID:
     raise ValueError("Falta la variable de entorno TELEGRAM_CHAT_ID en el archivo .env")
 CHAT_ID = int(TELEGRAM_CHAT_ID)
-HORA_AUTO = int(os.getenv("HORA_AUTO", "18"))
-MINUTO_AUTO = int(os.getenv("MINUTO_AUTO", "0"))
-
 _WATCHDOG_INTERVAL = 120   # segundos entre chequeos de conectividad
 
 
@@ -147,19 +144,6 @@ async def main():
     def _job_error_listener(event):
         logging.error(f"Job falló: {event.job_id} — {event.exception}")
     scheduler.add_listener(_job_error_listener, EVENT_JOB_ERROR)
-
-    # Workflow semi-automático viejo (lun-vie, seguía pidiendo elegir todo por botones)
-    # — DESACTIVADO el 2026-09-27 a favor de "autopilot_diario" (100% headless, todos los días).
-    # scheduler.add_job(
-    #     ejecutar_workflow_automatico,
-    #     trigger="cron",
-    #     day_of_week="mon-fri",
-    #     hour=HORA_AUTO,
-    #     minute=MINUTO_AUTO,
-    #     args=[app.bot],
-    #     id="workflow_diario",
-    #     replace_existing=True,
-    # )
 
     # Autopilot 100% automático — todos los días a las 13:00 hora Israel, sin intervención
     scheduler.add_job(

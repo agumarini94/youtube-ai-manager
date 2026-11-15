@@ -26,32 +26,25 @@ RAIZ = Path(__file__).parent
 os.chdir(RAIZ)
 sys.path.insert(0, str(RAIZ))
 
-TOKEN_FILE = RAIZ / "token_youtube.json"
 MAX_POR_PAGINA = 50
 
 
 def _cliente_youtube():
     """Cliente de la API con el token que ya dejó autenticar_youtube.py."""
-    from google.oauth2.credentials import Credentials
-    from google.auth.transport.requests import Request
-    from googleapiclient.discovery import build
+    from modules import youtube_auth
 
-    if not TOKEN_FILE.exists():
+    if not youtube_auth.hay_token():
         raise RuntimeError(
-            f"No se encontró {TOKEN_FILE.name}. Corré antes: python autenticar_youtube.py"
+            f"No se encontró {youtube_auth.TOKEN_FILE.name}. Corré antes: python autenticar_youtube.py"
         )
 
-    from modules.uploader import SCOPES
-
-    creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
-    if creds.expired and creds.refresh_token:
-        # No se persiste el token: este script es de solo lectura.
-        creds.refresh(Request())
-    if not creds.valid:
+    # persistir=False: este script es de solo lectura y no reescribe el token.
+    cliente = youtube_auth.cliente_youtube(persistir=False)
+    if cliente is None:
         raise RuntimeError(
             "Credenciales de YouTube inválidas o expiradas. Corré: python autenticar_youtube.py"
         )
-    return build("youtube", "v3", credentials=creds)
+    return cliente
 
 
 def leer_titulos_del_canal(youtube, maximo: int) -> list[dict]:

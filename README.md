@@ -251,8 +251,6 @@ cp .env.example .env
 | `ELEVENLABS_VOICE_ID_NARRACION` | same as above | Voice ID used specifically for `/narracion` reels |
 | `PEXELS_API_KEY` | — | Free stock images/videos — [pexels.com/api](https://www.pexels.com/api/) |
 | `PIXABAY_API_KEY` | — | Backup image source — [pixabay.com/api/docs](https://pixabay.com/api/docs/) |
-| `HORA_AUTO` | `18` | Hour for daily auto-publish (Argentina timezone) |
-| `MINUTO_AUTO` | `0` | Minute for daily auto-publish |
 
 ---
 

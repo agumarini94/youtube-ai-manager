@@ -23,16 +23,13 @@ try:
 except ImportError:
     GOOGLE_LIBS_OK = False
 
+from modules import youtube_auth
 
-# Permisos OAuth2 necesarios para subir videos y consultar el canal activo
-SCOPES = [
-    "https://www.googleapis.com/auth/youtube.upload",
-    "https://www.googleapis.com/auth/youtube.readonly",
-    "https://www.googleapis.com/auth/youtube.force-ssl",
-]
 
-# Archivo donde se guarda el token de sesión OAuth2
-TOKEN_FILE = "token_youtube.json"
+# Scopes y ruta del token viven en modules/youtube_auth.py — acá solo se reexportan
+# para los que ya los importaban desde este módulo (autenticar_youtube.py, video_manager.py).
+SCOPES = youtube_auth.SCOPES
+TOKEN_FILE = youtube_auth.TOKEN_FILE
 
 
 def verificar_dependencias() -> bool:
@@ -44,43 +41,13 @@ def verificar_dependencias() -> bool:
 
 
 def obtener_credenciales_guardadas() -> object | None:
-    """Carga el token guardado si existe y es válido."""
-    if not Path(TOKEN_FILE).exists():
-        return None
+    """
+    Carga el token guardado si existe y es válido, refrescándolo si hace falta.
+    Devuelve None ante cualquier problema: la pantalla ofrece reautenticar.
+    """
     try:
-        credenciales = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-        # Renovar token si expiró
-        if credenciales.expired and credenciales.refresh_token:
-            credenciales.refresh(Request())
-            with open(TOKEN_FILE, "w") as f:
-                f.write(credenciales.to_json())
-        if credenciales.valid:
-            return credenciales
+        return youtube_auth.cargar_credenciales()
     except Exception:
-        pass
-    return None
-
-
-def generar_url_auth() -> tuple[str, object] | None:
-    """
-    Genera la URL de autorización OAuth2 para mostrarla al usuario.
-    Usa select_account para que Google muestre el selector de canal/cuenta.
-    Retorna (url, flow) para completar el flujo después.
-    """
-    client_secrets = os.getenv("YOUTUBE_CLIENT_SECRETS_FILE", "client_secret.json")
-    if not Path(client_secrets).exists():
-        return None
-    try:
-        flow = InstalledAppFlow.from_client_secrets_file(
-            client_secrets,
-            SCOPES,
-            redirect_uri="urn:ietf:wg:oauth:2.0:oob"  # Modo consola: muestra el código en pantalla
-        )
-        # select_account + consent: fuerza mostrar el selector de cuenta Y de canal cada vez
-        url_auth, _ = flow.authorization_url(prompt="select_account consent")
-        return url_auth, flow
-    except Exception as e:
-        st.error(f"❌ Error al generar URL de autorización: {e}")
         return None
 
 
@@ -101,8 +68,7 @@ def autenticar_youtube_local() -> object | None:
         access_type="offline",
         prompt="select_account consent",
     )
-    with open(TOKEN_FILE, "w") as f:
-        f.write(credenciales.to_json())
+    youtube_auth.guardar_credenciales(credenciales)
     return credenciales
 
 
@@ -128,38 +94,15 @@ def obtener_todos_los_canales(youtube) -> list[dict]:
     return canales
 
 
-def obtener_canal_activo(youtube) -> tuple[str, str] | tuple[None, None]:
-    """
-    Retorna (nombre_canal, channel_id) del primer canal conectado.
-    """
-    canales = obtener_todos_los_canales(youtube)
-    if canales:
-        return canales[0]["nombre"], canales[0]["id"]
-    return None, None
-
-
 def cerrar_sesion_youtube():
     """Elimina el token guardado para forzar una nueva autenticación."""
     try:
-        Path(TOKEN_FILE).unlink(missing_ok=True)
+        youtube_auth.borrar_token()
     except Exception:
         pass
     # Limpiar estado de sesión
-    for key in ["youtube_autenticado", "youtube_canal_nombre", "youtube_canal_id", "youtube_canales", "oauth_flow", "oauth_url"]:
+    for key in ["youtube_autenticado", "youtube_canal_nombre", "youtube_canal_id", "youtube_canales"]:
         st.session_state.pop(key, None)
-
-
-def completar_auth_con_codigo(flow: object, codigo: str) -> object | None:
-    """Completa el flujo OAuth2 con el código que pegó el usuario."""
-    try:
-        flow.fetch_token(code=codigo.strip())
-        credenciales = flow.credentials
-        with open(TOKEN_FILE, "w") as f:
-            f.write(credenciales.to_json())
-        return credenciales
-    except Exception as e:
-        st.error(f"❌ Código inválido o expirado: {e}")
-        return None
 
 
 def obtener_cliente_youtube_oauth() -> object | None:
@@ -326,7 +269,6 @@ Sube tu video terminado directamente a YouTube con todos los metadatos, sin entr
 
     archivo_secrets = os.getenv("YOUTUBE_CLIENT_SECRETS_FILE", "client_secret.json")
     existe_secrets = Path(archivo_secrets).exists()
-    existe_token = Path(TOKEN_FILE).exists()
 
     if not existe_secrets:
         st.error(f"❌ No se encontró `{archivo_secrets}`. Descárgalo desde Google Cloud Console.")
@@ -380,7 +322,6 @@ Sube tu video terminado directamente a YouTube con todos los metadatos, sin entr
 
         # Verificar si es el canal correcto
         canal_nombre = canal_elegido["nombre"]
-        sin_canal = False
         if canal_objetivo:
             es_canal_correcto = canal_nombre.strip().lower() == canal_objetivo.strip().lower()
             if not es_canal_correcto:
@@ -390,41 +331,21 @@ Sube tu video terminado directamente a YouTube con todos los metadatos, sin entr
 
         if not es_canal_correcto:
             with st.expander("📋 ¿Cómo conectar viralesDelFutbol?", expanded=True):
-                if sin_canal:
-                    st.markdown("""
-**La cuenta autenticada no tiene canal de YouTube configurado todavía.**
+                st.markdown("""
+**Está conectado el canal equivocado. Seguí estos pasos:**
 
-**Paso 1 — Activá viralesDelFutbol en YouTube con el Gmail nuevo**
-1. Abrí [youtube.com](https://youtube.com) con `viralvideosinvestigate@gmail.com`
-2. Hacé clic en tu foto de perfil arriba a la derecha
-3. Tiene que aparecer **viralesDelFutbol** en la lista — hacé clic para cambiar a ese canal
-4. Si no aparece: la invitación como propietario todavía no fue aceptada — revisá el correo del Gmail nuevo
-5. Una vez que dice *viralesDelFutbol* en la esquina, volvé acá
+**Paso 1 — Cerrá la sesión actual**
+Hacé clic en **🔄 Cambiar cuenta** (arriba). Eso borra el token guardado.
 
-**Paso 2 — Volvé a autenticar**
-1. Hacé clic en **Cambiar canal** (arriba)
-2. Generá un nuevo link de autorización
-3. Abrilo en el navegador donde ya está activo viralesDelFutbol
-4. Aceptá y pegá el código
-                    """)
-                else:
-                    st.markdown("""
-**El canal equivocado está conectado. Seguí estos pasos exactos:**
+**Paso 2 — Autenticá de nuevo**
+1. Hacé clic en **🔐 Autenticar con Google** — se abre solo el navegador
+2. Elegí `agumarini94@gmail.com` en el selector de cuentas de Google
+3. En la pantalla siguiente elegí la cuenta de marca **SunsetVideos** —
+   ahí adentro está el canal **viralesDelFutbol**, que es el destino de las subidas
+4. Aceptá los permisos. La pestaña se cierra sola y volvés acá autenticado
 
-**Paso 1 — Cambiá el canal activo en YouTube**
-1. Abrí [youtube.com](https://youtube.com) en el mismo navegador que vas a usar para autorizar
-2. Hacé clic en tu foto de perfil (arriba a la derecha)
-3. Elegí **"Cambiar cuenta"** → seleccioná **viralesDelFutbol**
-4. Verificá que en la esquina dice *viralesDelFutbol* y no *agustinmarini*
-
-**Paso 2 — Autorizá desde acá**
-1. Volvé a esta app y hacé clic en **"Cambiar canal"** (arriba)
-2. Generá un nuevo link de autorización
-3. Abrilo en el mismo navegador donde activaste viralesDelFutbol
-4. Google va a pedir permisos para ese canal — aceptá
-5. Pegá el código acá
-
-> 💡 La clave es que el canal de YouTube en el navegador sea viralesDelFutbol **antes** de abrir el link.
+> 💡 El paso que más se equivoca es el 3: si elegís la cuenta personal en vez de la
+> de marca, Google conecta el canal personal y los videos se suben al lugar equivocado.
                 """)
             return
 

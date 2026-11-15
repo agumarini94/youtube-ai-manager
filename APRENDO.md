@@ -128,7 +128,7 @@ Es un archivo de texto simple que guarda tus variables de entorno (configuracion
 ```
 ANTHROPIC_API_KEY=sk-ant-123456
 TELEGRAM_TOKEN=bot123456:ABCdef
-HORA_AUTO=18
+TELEGRAM_CHAT_ID=123456789
 ```
 
 Tu código lee estas variables con una librería llamada `python-dotenv`. Así el código nunca tiene tus contraseñas escritas "a fuego" — las lee del archivo externo.

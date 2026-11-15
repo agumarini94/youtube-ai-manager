@@ -1188,17 +1188,6 @@ def seleccionar_con_claude(candidatos: list[dict], n: int, pista: str | None = N
     return _claude_seleccionar(candidatos, n, pista=pista)
 
 
-def buscar_y_seleccionar(n_clips: int = 4, max_duracion: int = 60) -> list[dict]:
-    """Pipeline completo: buscar → filtrar seguidores → seleccionar con Claude."""
-    candidatos = buscar_hashtags(max_duracion)
-    if not candidatos:
-        return []
-    candidatos = filtrar_por_seguidores(candidatos)
-    if not candidatos:
-        return []
-    return seleccionar_con_claude(candidatos, n_clips)
-
-
 def buscar_videos_autopilot(keyword: str, min_clips: int = 3, max_clips: int = 9,
                               max_duracion: int = 60,
                               min_vistas: int = 10_000, max_vistas: int = 500_000,
