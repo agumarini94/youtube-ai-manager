@@ -190,12 +190,22 @@ ENCUESTA PARA COMENTARIO FIJADO (campo "encuesta" en el JSON):
 - Las 4 variaciones deben ser distintas entre sí y del título principal"""
 
     if candidatos_titulo:
-        jugador_txt = (
-            f"\nJUGADOR QUE PROTAGONIZA EL VIDEO: {jugador}"
-            if jugador else
-            "\nJUGADOR: deducilo de los clips y de los frames — tiene que ser el que "
-            "realmente protagoniza el video, no uno que solo aparezca de fondo."
-        )
+        if jugador:
+            jugador_txt = f"\nJUGADOR QUE PROTAGONIZA EL VIDEO: {jugador}"
+        elif clips or frames_b64:
+            jugador_txt = (
+                "\nJUGADOR: deducilo de los clips y de los frames — tiene que ser el que "
+                "realmente protagoniza el video, no uno que solo aparezca de fondo."
+            )
+        else:
+            # Sin clips ni frames (la web en modo "escribo la descripción") pedirle que
+            # deduzca el jugador "de los clips" lo dejaba sin material: contestaba en
+            # prosa pidiendo el video en vez de devolver el JSON.
+            jugador_txt = (
+                "\nJUGADOR: deducilo de la descripción del video. Si no hay forma de "
+                "saber quién protagoniza, no inventes un nombre: armá los títulos sobre "
+                "la jugada que describe el video."
+            )
         candidatos_schema = """
   "candidatos": [
     {"titulo": "Candidato 1 — menos de 60 caracteres"},
@@ -292,6 +302,7 @@ Reglas:
 - Tags del array sin # y en minúsculas
 - Respondé SOLO con el JSON válido, sin texto extra.{reglas_candidatos}"""
 
+    texto = ""
     try:
         cliente = anthropic.Anthropic(api_key=api_key)
 
@@ -328,7 +339,12 @@ Reglas:
         return json.loads(texto.strip())
 
     except json.JSONDecodeError:
-        return {"error": "❌ Error al parsear la respuesta. Intentá de nuevo."}
+        # `respuesta_cruda` es para poder ver POR QUÉ no parseó: lo más común no es un
+        # JSON roto sino que Claude contestó en prosa (p. ej. pidiendo más datos).
+        return {
+            "error": "❌ Error al parsear la respuesta. Intentá de nuevo.",
+            "respuesta_cruda": texto[:200],
+        }
     except Exception as e:
         return {"error": f"❌ Error: {e}"}
 
@@ -544,6 +560,14 @@ Cuando ya tenés el video editado y listo para subir, pero necesitás el título
 
         if "error" in resultado:
             st.error(resultado["error"])
+            cruda = resultado.get("respuesta_cruda", "").strip()
+            if cruda:
+                with st.expander("🔍 Qué contestó Claude (primeros 200 caracteres)"):
+                    st.code(cruda, language=None)
+                    st.caption(
+                        "Si en vez de JSON pidió más datos, dale más detalle en la "
+                        "descripción del video o completá el campo del jugador."
+                    )
             return
 
         # Agregar capítulos al final de la descripción si los hay
