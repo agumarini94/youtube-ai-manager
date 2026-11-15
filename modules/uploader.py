@@ -84,6 +84,28 @@ def generar_url_auth() -> tuple[str, object] | None:
         return None
 
 
+def autenticar_youtube_local() -> object | None:
+    """
+    Abre el navegador y completa el flujo OAuth2 con un servidor local
+    temporal — sin copiar y pegar códigos.
+    Guarda el token en TOKEN_FILE y retorna las credenciales.
+    """
+    client_secrets = os.getenv("YOUTUBE_CLIENT_SECRETS_FILE", "client_secret.json")
+    if not Path(client_secrets).exists():
+        raise FileNotFoundError(f"No se encontró {client_secrets}")
+
+    flow = InstalledAppFlow.from_client_secrets_file(client_secrets, SCOPES)
+    # select_account + consent: permite elegir la cuenta de Google y después la de marca
+    credenciales = flow.run_local_server(
+        port=0,
+        access_type="offline",
+        prompt="select_account consent",
+    )
+    with open(TOKEN_FILE, "w") as f:
+        f.write(credenciales.to_json())
+    return credenciales
+
+
 def obtener_todos_los_canales(youtube) -> list[dict]:
     """
     Retorna todos los canales disponibles para la cuenta autenticada,
@@ -275,12 +297,11 @@ def mostrar_subidor():
 Sube tu video terminado directamente a YouTube con todos los metadatos, sin entrar a YouTube Studio.
 
 **Primera vez — Autenticación (solo una vez):**
-1. Presioná **Generar link de autorización**
-2. Abrí el link en el navegador
-3. Iniciá sesión con tu cuenta de Google y aceptá los permisos
-4. Google te muestra un código — copialo
-5. Pegalo en el campo "Código de autorización" y presioná **Confirmar código**
-6. Listo — la próxima vez ya no necesitás hacer esto
+1. Presioná **Autenticar con Google** — se abre solo el navegador
+2. Elegí `agumarini94@gmail.com` y después la cuenta de marca **SunsetVideos**
+3. Aceptá los permisos
+4. La pestaña se cierra sola y volvés acá ya autenticado
+5. Listo — la próxima vez ya no necesitás hacer esto
 
 **Subir un video:**
 1. Seleccioná tu archivo de video (MP4, MOV, hasta 2GB)
@@ -334,7 +355,7 @@ Sube tu video terminado directamente a YouTube con todos los metadatos, sin entr
         if not canales:
             with col_auth1:
                 st.error("⚠️ No se encontraron canales de YouTube en esta cuenta.")
-            st.info("Esta cuenta no tiene un canal de YouTube directo. Probá autenticarte con `agumarini94@gmail.com` para ver todos los canales incluyendo ViralLocos.")
+            st.info("Esta cuenta no tiene un canal de YouTube directo. Probá autenticarte con `agumarini94@gmail.com` y elegí la cuenta de marca SunsetVideos para ver el canal viralesDelFutbol.")
             return
 
         # Si hay más de un canal, mostrar selector
@@ -363,27 +384,27 @@ Sube tu video terminado directamente a YouTube con todos los metadatos, sin entr
         if canal_objetivo:
             es_canal_correcto = canal_nombre.strip().lower() == canal_objetivo.strip().lower()
             if not es_canal_correcto:
-                st.warning(f"⚠️ El canal seleccionado es **{canal_nombre}**, no **{canal_objetivo}**. Si ViralLocos no aparece en la lista, autenticarte con `agumarini94@gmail.com`.")
+                st.warning(f"⚠️ El canal seleccionado es **{canal_nombre}**, no **{canal_objetivo}**. Si viralesDelFutbol no aparece en la lista, volvé a autenticarte con `agumarini94@gmail.com` eligiendo la cuenta de marca SunsetVideos.")
         else:
             es_canal_correcto = True
 
         if not es_canal_correcto:
-            with st.expander("📋 ¿Cómo conectar ViralLocos?", expanded=True):
+            with st.expander("📋 ¿Cómo conectar viralesDelFutbol?", expanded=True):
                 if sin_canal:
                     st.markdown("""
 **La cuenta autenticada no tiene canal de YouTube configurado todavía.**
 
-**Paso 1 — Activá ViralLocos en YouTube con el Gmail nuevo**
+**Paso 1 — Activá viralesDelFutbol en YouTube con el Gmail nuevo**
 1. Abrí [youtube.com](https://youtube.com) con `viralvideosinvestigate@gmail.com`
 2. Hacé clic en tu foto de perfil arriba a la derecha
-3. Tiene que aparecer **ViralLocos** en la lista — hacé clic para cambiar a ese canal
+3. Tiene que aparecer **viralesDelFutbol** en la lista — hacé clic para cambiar a ese canal
 4. Si no aparece: la invitación como propietario todavía no fue aceptada — revisá el correo del Gmail nuevo
-5. Una vez que dice *ViralLocos* en la esquina, volvé acá
+5. Una vez que dice *viralesDelFutbol* en la esquina, volvé acá
 
 **Paso 2 — Volvé a autenticar**
 1. Hacé clic en **Cambiar canal** (arriba)
 2. Generá un nuevo link de autorización
-3. Abrilo en el navegador donde ya está activo ViralLocos
+3. Abrilo en el navegador donde ya está activo viralesDelFutbol
 4. Aceptá y pegá el código
                     """)
                 else:
@@ -393,73 +414,50 @@ Sube tu video terminado directamente a YouTube con todos los metadatos, sin entr
 **Paso 1 — Cambiá el canal activo en YouTube**
 1. Abrí [youtube.com](https://youtube.com) en el mismo navegador que vas a usar para autorizar
 2. Hacé clic en tu foto de perfil (arriba a la derecha)
-3. Elegí **"Cambiar cuenta"** → seleccioná **ViralLocos**
-4. Verificá que en la esquina dice *ViralLocos* y no *agustinmarini*
+3. Elegí **"Cambiar cuenta"** → seleccioná **viralesDelFutbol**
+4. Verificá que en la esquina dice *viralesDelFutbol* y no *agustinmarini*
 
 **Paso 2 — Autorizá desde acá**
 1. Volvé a esta app y hacé clic en **"Cambiar canal"** (arriba)
 2. Generá un nuevo link de autorización
-3. Abrilo en el mismo navegador donde activaste ViralLocos
+3. Abrilo en el mismo navegador donde activaste viralesDelFutbol
 4. Google va a pedir permisos para ese canal — aceptá
 5. Pegá el código acá
 
-> 💡 La clave es que el canal de YouTube en el navegador sea ViralLocos **antes** de abrir el link.
+> 💡 La clave es que el canal de YouTube en el navegador sea viralesDelFutbol **antes** de abrir el link.
                 """)
             return
 
         st.session_state["youtube_autenticado"] = True
     else:
-        st.info("🔐 Necesitas autenticarte con Google para conectar el canal ViralLocos.")
+        st.info("🔐 Necesitas autenticarte con Google para conectar el canal viralesDelFutbol.")
 
         with st.expander("📋 Instrucciones — Leer antes de autorizar", expanded=True):
             st.markdown("""
-**Para que los videos se suban a ViralLocos y no a agustinmarini, seguí estos pasos en orden:**
+**Para que los videos se suban al canal correcto, seguí estos pasos en orden:**
 
-**Paso 1 — Activá ViralLocos en tu navegador**
-1. Abrí [youtube.com](https://youtube.com) en el navegador que vas a usar
-2. Hacé clic en tu foto de perfil → **"Cambiar cuenta"** → **ViralLocos**
-3. Confirmá que dice *ViralLocos* arriba a la derecha
+**Paso 1 — Presioná "Autenticar con Google"** acá abajo. Se abre solo el navegador.
 
-**Paso 2 — Generá el link de autorización desde acá abajo**
+**Paso 2 — Elegí `agumarini94@gmail.com`** en el selector de cuentas de Google.
 
-**Paso 3 — Abrí el link en el mismo navegador** (donde activaste ViralLocos)
+**Paso 3 — Elegí la cuenta de marca SunsetVideos** en la pantalla siguiente.
+Dentro de esa cuenta de marca está el canal **viralesDelFutbol**, que es el destino de las subidas.
 
-**Paso 4 — Aceptá los permisos y copiá el código que te da Google**
+**Paso 4 — Aceptá los permisos.** La pestaña se cierra sola y volvés acá autenticado.
 
-**Paso 5 — Pegalo acá abajo y confirmá**
-
-> ⚠️ Si saltás el Paso 1, Google va a autorizar el canal agustinmarini por defecto.
+> ⚠️ Si en el Paso 3 elegís la cuenta personal en vez de la de marca, los videos van a subirse al canal equivocado.
             """)
 
-        # Paso 1 — Generar URL
-        if st.button("🔗 Generar link de autorización", use_container_width=True):
-            resultado = generar_url_auth()
-            if resultado:
-                url_auth, flow = resultado
-                st.session_state["oauth_flow"] = flow
-                st.session_state["oauth_url"] = url_auth
-
-        # Mostrar URL si ya fue generada
-        if "oauth_url" in st.session_state:
-            st.markdown("---")
-            st.markdown("**Link de autorización** — copialo y abrilo en el navegador donde activaste ViralLocos:")
-            st.code(st.session_state["oauth_url"])
-            st.markdown("**Código de autorización** — Google te lo muestra después de aceptar:")
-
-            codigo = st.text_input("Pegá el código aquí", placeholder="4/0AX4XfW...")
-
-            if st.button("✅ Confirmar código", use_container_width=True, type="primary"):
-                if codigo.strip():
-                    flow = st.session_state.get("oauth_flow")
-                    if flow:
-                        credenciales = completar_auth_con_codigo(flow, codigo)
-                        if credenciales:
-                            st.session_state["youtube_autenticado"] = True
-                            st.session_state.pop("oauth_flow", None)
-                            st.session_state.pop("oauth_url", None)
-                            st.rerun()
+        # Un solo paso — Google abre en el navegador y vuelve solo
+        if st.button("🔐 Autenticar con Google", use_container_width=True, type="primary"):
+            with st.spinner("Esperando que completes la autorización en el navegador..."):
+                try:
+                    autenticar_youtube_local()
+                except Exception as e:
+                    st.error(f"❌ Falló la autenticación: {e}")
                 else:
-                    st.warning("⚠️ Pegá el código antes de confirmar.")
+                    st.session_state["youtube_autenticado"] = True
+                    st.rerun()
 
         # Si no está autenticado, no mostrar el resto
         if not st.session_state.get("youtube_autenticado"):

@@ -743,14 +743,16 @@ def _info_por_url(url: str) -> dict | None:
 
 def _buscar_hashtag(tag: str, cantidad: int = 20) -> list[dict]:
     """Busca videos por hashtag via tikwm challenge API."""
+    url_info = "https://www.tikwm.com/api/challenge/info"
     try:
-        r = requests.post(
-            "https://www.tikwm.com/api/challenge/info",
-            data={"challenge_name": tag},
-            timeout=15,
+        r = requests.post(url_info, data={"challenge_name": tag}, timeout=15)
+        logger.info(
+            f"_buscar_hashtag({tag!r}): POST {url_info} → status={r.status_code} "
+            f"body[:200]={r.text[:200]!r}"
         )
         data = r.json()
         if data.get("code") != 0:
+            logger.warning(f"_buscar_hashtag({tag!r}): challenge/info code={data.get('code')} msg={data.get('msg')}")
             return []
         ch = data.get("data", {})
         challenge_id = (
@@ -758,19 +760,44 @@ def _buscar_hashtag(tag: str, cantidad: int = 20) -> list[dict]:
             or ch.get("ch_info", {}).get("challenge", {}).get("id")
         )
         if not challenge_id:
+            logger.warning(f"_buscar_hashtag({tag!r}): sin challenge_id en la respuesta")
             return []
 
-        r2 = requests.post(
-            "https://www.tikwm.com/api/challenge/posts",
-            data={"challenge_id": challenge_id, "count": cantidad, "cursor": 0},
-            timeout=15,
-        )
-        data2 = r2.json()
-        if data2.get("code") != 0:
-            return []
+        url_posts = "https://www.tikwm.com/api/challenge/posts"
+        items_crudos: list[dict] = []
+        cursor = 0
+        max_paginas = 3
+        max_total = 60
+        for pagina in range(1, max_paginas + 1):
+            r2 = requests.post(
+                url_posts,
+                data={"challenge_id": challenge_id, "count": cantidad, "cursor": cursor},
+                timeout=15,
+            )
+            logger.info(
+                f"_buscar_hashtag({tag!r}): página {pagina}/{max_paginas} cursor={cursor} "
+                f"POST {url_posts} → status={r2.status_code} body[:200]={r2.text[:200]!r}"
+            )
+            data2 = r2.json()
+            if data2.get("code") != 0:
+                logger.warning(f"_buscar_hashtag({tag!r}): challenge/posts code={data2.get('code')} msg={data2.get('msg')}")
+                break
+            data2_data = data2.get("data", {})
+            pagina_items = data2_data.get("videos", [])
+            if not pagina_items:
+                break
+            items_crudos.extend(pagina_items)
+            if len(items_crudos) >= max_total:
+                break
+            nuevo_cursor = data2_data.get("cursor")
+            if nuevo_cursor is None or nuevo_cursor == cursor or not data2_data.get("hasMore", True):
+                break
+            cursor = nuevo_cursor
+
+        logger.info(f"_buscar_hashtag({tag!r}): {len(items_crudos)} videos crudos tras paginación")
 
         videos = []
-        for item in data2.get("data", {}).get("videos", []):
+        for item in items_crudos[:max_total]:
             autor = item.get("author") or {}
             uid = autor.get("unique_id") or ""
             # challenge/posts usa "video_id", no "id"
@@ -786,6 +813,7 @@ def _buscar_hashtag(tag: str, cantidad: int = 20) -> list[dict]:
                 "titulo": item.get("title") or "Sin título",
                 "canal": uid,
                 "vistas": int(item.get("play_count") or 0),
+                "likes": int(item.get("digg_count") or 0),
                 "duracion": int(item.get("duration") or 0),
                 "thumbnail": item.get("cover") or item.get("origin_cover") or "",
                 "url": f"https://www.tiktok.com/@{uid}/video/{vid_id}",
@@ -794,8 +822,10 @@ def _buscar_hashtag(tag: str, cantidad: int = 20) -> list[dict]:
                 "download_url_wm": item.get("wmplay") or "",
                 "create_time": ct,
             })
+        logger.info(f"_buscar_hashtag({tag!r}): {len(videos)} videos parseados")
         return videos
-    except Exception:
+    except Exception as e:
+        logger.warning(f"_buscar_hashtag({tag!r}): excepción {type(e).__name__}: {e}")
         return []
 
 
@@ -807,20 +837,27 @@ def _buscar_keywords(query: str, cantidad: int = 20) -> list[dict]:
     global _keywords_disponibles
     scraper = _cloudscraper_session()
     if scraper is None:
+        logger.warning(f"_buscar_keywords({query!r}): cloudscraper no disponible (no instalado) — no se intenta la request")
         _keywords_disponibles = False
         return []
+    url = "https://www.tikwm.com/api/feed/search"
     try:
         r = scraper.post(
-            "https://www.tikwm.com/api/feed/search",
+            url,
             data={"keywords": query, "count": cantidad, "cursor": 0},
             headers=_HEADERS,
             timeout=20,
+        )
+        logger.info(
+            f"_buscar_keywords({query!r}): POST {url} → status={r.status_code} "
+            f"body[:200]={r.text[:200]!r}"
         )
         if r.status_code != 200:
             _keywords_disponibles = False
             return []
         data = r.json()
         if data.get("code") != 0:
+            logger.warning(f"_buscar_keywords({query!r}): code={data.get('code')} msg={data.get('msg')}")
             return []
 
         # feed/search puede devolver data como dict con "videos" o directamente como lista
@@ -850,6 +887,7 @@ def _buscar_keywords(query: str, cantidad: int = 20) -> list[dict]:
                 "titulo": item.get("title") or item.get("desc") or "Sin título",
                 "canal": uid,
                 "vistas": int(item.get("play_count") or item.get("playCount") or 0),
+                "likes": int(item.get("digg_count") or item.get("diggCount") or 0),
                 "duracion": int(item.get("duration") or 0),
                 "thumbnail": item.get("cover") or item.get("origin_cover") or item.get("originCover") or "",
                 "url": f"https://www.tiktok.com/@{uid}/video/{vid_id}",
@@ -857,8 +895,10 @@ def _buscar_keywords(query: str, cantidad: int = 20) -> list[dict]:
                 "download_url_wm": item.get("wmplay") or "",
                 "create_time": ct,
             })
+        logger.info(f"_buscar_keywords({query!r}): {len(videos)} videos parseados")
         return videos
-    except Exception:
+    except Exception as e:
+        logger.warning(f"_buscar_keywords({query!r}): excepción {type(e).__name__}: {e}")
         _keywords_disponibles = False
         return []
 
@@ -1157,6 +1197,114 @@ def buscar_y_seleccionar(n_clips: int = 4, max_duracion: int = 60) -> list[dict]
     if not candidatos:
         return []
     return seleccionar_con_claude(candidatos, n_clips)
+
+
+def buscar_videos_autopilot(keyword: str, min_clips: int = 3, max_clips: int = 9,
+                              max_duracion: int = 60,
+                              min_vistas: int = 10_000, max_vistas: int = 500_000,
+                              min_likes: int = 500, avisar: bool = True) -> list[dict]:
+    """
+    Selección de videos para el modo autopilot: ni de bajo perfil ni mega viral —
+    busca videos con buen engagement. Vistas entre min_vistas y max_vistas, likes
+    mínimo min_likes, ordenados por ratio de engagement (likes/vistas) descendente
+    — los de mejor reacción relativa primero. Respeta el historial para no repetir
+    videos. Devuelve entre min_clips y max_clips candidatos: todos los que pasen el
+    filtro, hasta max_clips.
+
+    Fuentes: además del keyword search (_buscar_keywords, requiere cloudscraper —
+    puede fallar si tikwm bloquea el challenge de Cloudflare), suma como fallback
+    _buscar_hashtag() con el hashtag compuesto recibido en `keyword` — el mismo
+    mecanismo que ya usa buscar_hashtags() para el flujo manual de /trabajar, que
+    no depende de cloudscraper. Los videos que vienen de ese hashtag se filtran por
+    relevancia de título (palabras de fútbol) antes de sumarlos al pool, salvo que
+    el filtro deje menos de min_clips — en ese caso se usan todos.
+
+    Si no alcanza para juntar min_clips y avisar=True, avisa por Telegram (API HTTP
+    directa — este módulo no depende de telegram_bot.py). Con avisar=False no manda
+    nada (usado por ejecutar_autopilot_pipeline(), que ya reporta el error final con
+    los hashtags fallidos tras sus propios reintentos). Devuelve lo que haya
+    encontrado, aunque sea menos de min_clips.
+    """
+    historial = cargar_historial()
+
+    crudos_kw = _buscar_keywords(keyword, cantidad=60)
+    crudos_tag = _buscar_hashtag(keyword, cantidad=60)
+
+    palabras_relevantes = [
+        "football", "soccer", "goal", "gol", "fifa", "uefa", "champions", "premier",
+        "laliga", "messi", "ronaldo", "neymar", "futbol", "balón", "penalty",
+        "tackle", "striker", "keeper",
+        "mbappe", "haaland", "vinicius", "benzema", "lewandowski", "salah",
+        "barcelona", "madrid", "manchester", "liverpool", "chelsea", "psg",
+        "juventus", "cr7",
+    ]
+    crudos_tag_relevantes = [
+        v for v in crudos_tag
+        if any(p in (v.get("titulo") or "").lower() for p in palabras_relevantes)
+    ]
+    if len(crudos_tag_relevantes) >= min_clips:
+        logger.info(
+            f"buscar_videos_autopilot({keyword!r}): filtro de relevancia — "
+            f"{len(crudos_tag_relevantes)}/{len(crudos_tag)} videos del hashtag mencionan fútbol"
+        )
+        crudos_tag = crudos_tag_relevantes
+    else:
+        logger.info(
+            f"buscar_videos_autopilot({keyword!r}): filtro de relevancia salteado — "
+            f"solo {len(crudos_tag_relevantes)}/{len(crudos_tag)} videos del hashtag mencionan fútbol, "
+            f"se usan todos para no quedarse sin candidatos"
+        )
+
+    logger.info(
+        f"buscar_videos_autopilot({keyword!r}): keywords_disponibles={keywords_disponibles()} "
+        f"crudos_keyword={len(crudos_kw)} crudos_hashtag({keyword!r})={len(crudos_tag)}"
+    )
+    crudos = crudos_kw + crudos_tag
+
+    vistos: set[str] = set()
+    candidatos: list[dict] = []
+    for v in crudos:
+        vid = v.get("id")
+        if not vid or vid in vistos:
+            continue
+        vistos.add(vid)
+        if vid in historial:
+            continue
+        if not (3 <= v.get("duracion", 0) <= max_duracion):
+            continue
+        vistas = v.get("vistas", 0)
+        likes = v.get("likes", 0)
+        if not (min_vistas <= vistas <= max_vistas):
+            continue
+        if likes < min_likes:
+            continue
+        candidatos.append(v)
+
+    candidatos.sort(key=lambda x: (x.get("likes", 0) / (x.get("vistas", 0) or 1)), reverse=True)
+    logger.info(
+        f"buscar_videos_autopilot({keyword!r}): {len(candidatos)} candidatos con "
+        f"{min_vistas}<=vistas<={max_vistas} y likes>={min_likes}"
+    )
+
+    if len(candidatos) < min_clips:
+        logger.warning(
+            f"buscar_videos_autopilot({keyword!r}): insuficientes candidatos, "
+            f"solo {len(candidatos)}/{min_clips} disponibles"
+        )
+        if avisar:
+            token = os.getenv("TELEGRAM_TOKEN")
+            chat_id = os.getenv("TELEGRAM_CHAT_ID")
+            if token and chat_id:
+                try:
+                    requests.post(
+                        f"https://api.telegram.org/bot{token}/sendMessage",
+                        data={"chat_id": chat_id, "text": f"⚠️ No encontré videos para {keyword}. Reintentando mañana."},
+                        timeout=10,
+                    )
+                except Exception:
+                    pass
+
+    return candidatos[:max_clips]
 
 
 def info_desde_urls(urls: list[str]) -> list[dict]:

@@ -50,6 +50,59 @@ def obtener_ultimo_video_youtube() -> dict | None:
     return videos[-1] if videos else None
 
 
+def _video_id(url: str) -> str:
+    """Extrae el id de un link de YouTube. Devuelve '' si no se puede."""
+    if not url:
+        return ""
+    if "v=" in url:
+        return url.split("v=")[-1].split("&")[0]
+    return url.rstrip("/").rsplit("/", 1)[-1]
+
+
+def ultimos_titulos(n: int = 100) -> list[str]:
+    """
+    Los últimos `n` títulos subidos, del más viejo al más nuevo.
+    Lo usa el autopilot para elegir el título que menos se repita.
+    """
+    videos = _leer_json(YOUTUBE_FILE)
+    titulos = [v.get("titulo", "").strip() for v in videos]
+    return [t for t in titulos if t][-n:]
+
+
+def agregar_videos_youtube(entradas: list[dict]) -> int:
+    """
+    Agrega varios videos al historial sin duplicar los que ya están (compara por id
+    de video). Pensado para la carga inicial desde la API — ver
+    cargar_historial_titulos.py. Retorna cuántos se agregaron.
+
+    entradas: dicts con las keys 'url', 'titulo' y 'fecha'.
+    """
+    _ensure_data_dir()
+    videos = _leer_json(YOUTUBE_FILE)
+    conocidos = {_video_id(v.get("url", "")) for v in videos}
+    conocidos.discard("")
+
+    agregados = 0
+    for e in entradas:
+        vid = _video_id(e.get("url", ""))
+        if not vid or vid in conocidos:
+            continue
+        videos.append({
+            "url": e.get("url", ""),
+            "titulo": e.get("titulo", ""),
+            "fecha": e.get("fecha") or datetime.now(timezone.utc).isoformat(),
+        })
+        conocidos.add(vid)
+        agregados += 1
+
+    if agregados:
+        # Orden cronológico: ultimos_titulos() y obtener_ultimo_video_youtube()
+        # asumen que el final de la lista es lo más reciente.
+        videos.sort(key=lambda v: v.get("fecha", ""))
+        _escribir_json(YOUTUBE_FILE, videos)
+    return agregados
+
+
 def bloque_video_anterior(dias_limite: int = 7) -> str:
     """
     Genera el bloque de texto con el link al video anterior para inyectar

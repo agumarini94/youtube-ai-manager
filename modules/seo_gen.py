@@ -10,6 +10,9 @@ import json
 import base64
 import tempfile
 import subprocess
+import re
+import unicodedata
+from difflib import SequenceMatcher
 from pathlib import Path
 
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
@@ -76,15 +79,62 @@ def _formatear_comentario_encuesta(encuesta: dict) -> str:
     return "\n".join(lineas)
 
 
+_RE_SOLO_TEXTO = re.compile(r"[^a-z0-9áéíóúñü ]+")
+
+
+def _normalizar_titulo(titulo: str) -> str:
+    """Minúsculas, sin emojis ni puntuación — para comparar títulos entre sí."""
+    texto = unicodedata.normalize("NFKC", titulo).lower()
+    texto = _RE_SOLO_TEXTO.sub(" ", texto)
+    return " ".join(texto.split())
+
+
+def elegir_titulo_menos_repetido(candidatos: list[str], historial: list[str],
+                                 max_chars: int = 60) -> str | None:
+    """
+    De `candidatos`, devuelve el que menos se parece a los títulos de `historial`.
+
+    Descarta los que llegan o pasan `max_chars`. La similitud de cada candidato es
+    la más alta que saca contra cualquier título del historial, así que gana el que
+    tiene el parecido máximo más bajo. Retorna None si no sobrevive ninguno — el
+    llamador decide con qué título seguir.
+    """
+    validos = [c.strip() for c in candidatos if c and c.strip()]
+    validos = [c for c in validos if len(c) < max_chars]
+    if not validos:
+        return None
+
+    previos = [n for n in (_normalizar_titulo(h) for h in historial) if n]
+    if not previos:
+        return validos[0]
+
+    def similitud_maxima(candidato: str) -> float:
+        actual = _normalizar_titulo(candidato)
+        if not actual:
+            return 1.0
+        return max(SequenceMatcher(None, actual, p).ratio() for p in previos)
+
+    return min(validos, key=similitud_maxima)
+
+
 def generar_seo(descripcion: str, tipo: str, canal_handle: str, idioma: str,
                 frames_b64: list[str] | None = None,
                 formato: str = "video",
                 angulo: str = "",
-                clips: list[dict] | None = None) -> dict:
+                clips: list[dict] | None = None,
+                candidatos_titulo: bool = False,
+                jugador: str = "") -> dict:
     """
     Genera título, descripción optimizada y tags usando Claude.
     Si hay frames, Claude analiza el video visualmente.
     formato: "video" | "reel" | "ambos" — ajusta el SEO para Shorts si corresponde.
+
+    candidatos_titulo: solo lo usa el autopilot de las 13:00. Con True, el prompt de
+    Shorts pide además 3 candidatos de título de menos de 60 chars, con el jugador al
+    principio y estructuras variadas, y prohíbe títulos sobre muertes, lesiones, salud
+    o noticias sin confirmar. Con False (el default de /trabajar y del reel del día de
+    las 19:00) el prompt queda exactamente igual que antes.
+    jugador: nombre que tiene que abrir el título. Vacío = que lo deduzca de los clips.
     """
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
@@ -116,13 +166,61 @@ ENCUESTA PARA COMENTARIO FIJADO (campo "encuesta" en el JSON):
 - IMPORTANTE: NO pongas la encuesta en la descripción del video. La descripción debe ser solo texto de SEO sin preguntas de votación. La encuesta va EXCLUSIVAMENTE en el campo JSON "encuesta" para postearse como comentario separado
 - Solo retorná null si el contenido es tan variado que no hay un hilo común (ej: 4 clips de temas completamente distintos sin relación)"""
 
+    # Bloques que solo entran con candidatos_titulo=True (autopilot de las 13:00).
+    # Con el flag en False los tres quedan vacíos y el prompt no cambia en nada.
+    jugador_txt = ""
+    candidatos_schema = ""
+    reglas_titulo = """REGLAS para todos los títulos (principal y variaciones):
+- Máximo 45 caracteres incluyendo emoji
+- Empezá con emoji llamativo
+- Usá MAYÚSCULAS para palabras clave si el idioma es español
+- Patrones ganadores: "😱 NADIE LO VIO VENIR", "🔥 EL GOL MÁS ÉPICO", "💀 ESE PENAL IMPERDIBLE", "🤯 MESSI HACE ESTO"
+- NUNCA: "Compilación de...", "Los mejores...", títulos de más de 50 chars
+- Las 4 variaciones deben ser distintas entre sí y del título principal"""
+
+    if candidatos_titulo:
+        jugador_txt = (
+            f"\nJUGADOR QUE PROTAGONIZA EL VIDEO: {jugador}"
+            if jugador else
+            "\nJUGADOR: deducilo de los clips y de los frames — tiene que ser el que "
+            "realmente protagoniza el video, no uno que solo aparezca de fondo."
+        )
+        candidatos_schema = """
+  "candidatos": [
+    {"titulo": "Candidato 1 — menos de 60 caracteres"},
+    {"titulo": "Candidato 2 — menos de 60 caracteres, estructura distinta al 1"},
+    {"titulo": "Candidato 3 — menos de 60 caracteres, estructura distinta al 1 y al 2"}
+  ],"""
+        reglas_titulo = """REGLAS para las 4 "variaciones":
+- Máximo 45 caracteres incluyendo emoji
+- Empezá con emoji llamativo
+- NUNCA: "Compilación de...", "Los mejores...", títulos de más de 50 chars
+- Las 4 variaciones deben ser distintas entre sí
+
+REGLAS para los 3 "candidatos" — de acá sale el título que se publica:
+- Menos de 60 caracteres cada uno, contando emojis y espacios
+- Los 3 TIENEN que empezar con el nombre del jugador
+- Las 3 estructuras tienen que ser distintas entre sí. Como máximo UNO puede llevar
+  emoji y como máximo UNO puede llevar palabras en MAYÚSCULAS: el resto va en texto
+  normal. No repitas la misma fórmula tres veces.
+- Variá la forma entre los tres: pregunta, dato concreto, descripción de la jugada,
+  comparación, año o contexto del partido
+- Nada de "Compilación de...", "Los mejores..." ni títulos genéricos
+
+PROHIBIDO EN TODOS LOS TÍTULOS (regla dura, no negociable):
+- Muertes, fallecimientos, homenajes póstumos
+- Lesiones, estado de salud, internaciones, retiros por lesión
+- Noticias, fichajes, rumores o cualquier cosa que no se vea en los clips
+- Si el tema del video apunta para alguno de esos lados, el título va neutro y
+  descriptivo sobre la JUGADA que se ve en pantalla, sin mencionar nada de eso"""
+
     if es_short:
         prompt = f"""Sos un experto en crecimiento de YouTube Shorts. Tu objetivo es que este Short explote en el algoritmo.
 
 DESCRIPCIÓN DEL VIDEO: {descripcion}
 TIPO DE CONTENIDO: {tipo}
 IDIOMA: {idioma}
-FORMATO: YouTube Short (vertical, menos de 60 segundos){angulo_txt}{clips_txt}
+FORMATO: YouTube Short (vertical, menos de 60 segundos){angulo_txt}{jugador_txt}{clips_txt}
 {handle_txt}
 
 CONTEXTO CRÍTICO:
@@ -135,7 +233,7 @@ CONTEXTO CRÍTICO:
 Generá el paquete SEO en JSON:
 
 {{
-  "titulo": "Título de máximo 45 caracteres. Fórmulas que funcionan: '😱 [REACCIÓN EMOCIONAL]', '💀 [SITUACIÓN EXTREMA]', '🤣 [SITUACIÓN GRACIOSA]'. NUNCA genérico. Debe dar FOMO o generar risa solo con leerlo.",
+  "titulo": "Título de máximo 45 caracteres. Fórmulas que funcionan: '😱 [REACCIÓN EMOCIONAL]', '💀 [SITUACIÓN EXTREMA]', '🤣 [SITUACIÓN GRACIOSA]'. NUNCA genérico. Debe dar FOMO o generar risa solo con leerlo.",{candidatos_schema}
   "variaciones": [
     {{"estilo": "🔢 Con número", "titulo": "Variación con número específico (Los 5..., 3 veces que...), máx 45 chars"}},
     {{"estilo": "❓ Curiosity gap", "titulo": "Variación que genera intriga o sorpresa sin revelar el final, máx 45 chars"}},
@@ -147,13 +245,7 @@ Generá el paquete SEO en JSON:
   "encuesta": {encuesta_schema}
 }}
 
-REGLAS para todos los títulos (principal y variaciones):
-- Máximo 45 caracteres incluyendo emoji
-- Empezá con emoji llamativo
-- Usá MAYÚSCULAS para palabras clave si el idioma es español
-- Patrones ganadores: "😱 NADIE LO VIO VENIR", "🔥 EL GOL MÁS ÉPICO", "💀 ESE PENAL IMPERDIBLE", "🤯 MESSI HACE ESTO"
-- NUNCA: "Compilación de...", "Los mejores...", títulos de más de 50 chars
-- Las 4 variaciones deben ser distintas entre sí y del título principal
+{reglas_titulo}
 
 Respondé SOLO con el JSON válido, sin texto extra."""
     else:

@@ -6,11 +6,15 @@ Uso:
     cd youtube_ai_manager
     python run_bot.py
 
-El bot escucha comandos y también ejecuta el workflow automáticamente
-de lunes a viernes a las 18:00 (hora de Argentina).
+El bot escucha comandos y también sube dos reels por día, sin intervención
+del usuario (ambos en hora de Israel):
+    13:00 — autopilot: compilación de clips virales con hashtag al azar
+    19:00 — reel del día: efeméride de data/efemerides.json (si hoy no hay, no sube nada)
 
 Comandos disponibles en Telegram:
     /trabajar       — inicia el workflow manualmente
+    /autopilot      — dispara el modo 100% automático ahora, sin esperar las 13:00
+    /noticia_test   — arma el reel del día (efemérides) sin subirlo, para probar
     /urls <url>...  — usa URLs de TikTok específicas
     /estado         — muestra el estado actual
     /cancelar       — cancela el proceso en curso
@@ -23,13 +27,17 @@ import signal
 import traceback
 from datetime import datetime
 
+import pytz
 from dotenv import load_dotenv
 
 load_dotenv()
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram.ext import ContextTypes
-from modules.telegram_bot import crear_aplicacion, ejecutar_workflow_automatico, verificar_y_programar_pronosticos
+from modules.telegram_bot import (
+    crear_aplicacion, ejecutar_autopilot, ejecutar_reel_del_dia,
+    verificar_y_programar_pronosticos,
+)
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -140,15 +148,41 @@ async def main():
         logging.error(f"Job falló: {event.job_id} — {event.exception}")
     scheduler.add_listener(_job_error_listener, EVENT_JOB_ERROR)
 
-    # Workflow automático diario
+    # Workflow semi-automático viejo (lun-vie, seguía pidiendo elegir todo por botones)
+    # — DESACTIVADO el 2026-09-27 a favor de "autopilot_diario" (100% headless, todos los días).
+    # scheduler.add_job(
+    #     ejecutar_workflow_automatico,
+    #     trigger="cron",
+    #     day_of_week="mon-fri",
+    #     hour=HORA_AUTO,
+    #     minute=MINUTO_AUTO,
+    #     args=[app.bot],
+    #     id="workflow_diario",
+    #     replace_existing=True,
+    # )
+
+    # Autopilot 100% automático — todos los días a las 13:00 hora Israel, sin intervención
     scheduler.add_job(
-        ejecutar_workflow_automatico,
+        ejecutar_autopilot,
         trigger="cron",
-        day_of_week="mon-fri",
-        hour=HORA_AUTO,
-        minute=MINUTO_AUTO,
+        hour=13,
+        minute=0,
+        timezone=pytz.timezone("Asia/Jerusalem"),
         args=[app.bot],
-        id="workflow_diario",
+        id="autopilot_diario",
+        replace_existing=True,
+    )
+
+    # Reel del día (efemérides) — todos los días a las 19:00 hora Israel.
+    # Si ese día no hay efeméride en data/efemerides.json, no se sube nada.
+    scheduler.add_job(
+        ejecutar_reel_del_dia,
+        trigger="cron",
+        hour=19,
+        minute=0,
+        timezone=pytz.timezone("Asia/Jerusalem"),
+        args=[app.bot],
+        id="reel_del_dia",
         replace_existing=True,
     )
 
@@ -187,6 +221,8 @@ async def main():
     from telegram import BotCommand
     await app.bot.set_my_commands([
         BotCommand("trabajar",  "Crear contenido (Texto, Imagen, Historia, TikTok)"),
+        BotCommand("autopilot", "Disparar el modo 100% automático ahora"),
+        BotCommand("noticia_test", "Probar el reel del día sin subirlo (dry-run)"),
         BotCommand("texto",     "Short de texto sobre fondo de color"),
         BotCommand("imagen",    "Reel de pregunta viral con imágenes"),
         BotCommand("historia",  "Historia de atención al público"),
@@ -205,8 +241,9 @@ async def main():
     await app.updater.start_polling(drop_pending_updates=True)
 
     logging.info(
-        f"Bot iniciado. Workflow: lun-vie {HORA_AUTO:02d}:{MINUTO_AUTO:02d} · "
-        f"Pronósticos auto: todos los días 05:00 (Argentina)"
+        "Bot iniciado. Autopilot: todos los días 13:00 (Israel) · "
+        "Reel del día (efemérides): todos los días 19:00 (Israel) · "
+        "Pronósticos auto: todos los días 05:00 (Argentina)"
     )
 
     # Notificar que el bot arrancó
@@ -215,7 +252,8 @@ async def main():
             chat_id=CHAT_ID,
             text=(
                 f"🟢 <b>Bot iniciado</b> — listo para recibir comandos.\n"
-                f"<i>Workflow: lun-vie {HORA_AUTO:02d}:{MINUTO_AUTO:02d} · "
+                f"<i>Autopilot: todos los días 13:00 Israel · "
+                f"Reel del día: todos los días 19:00 Israel · "
                 f"Pronósticos automáticos: todos los días 05:00 · "
                 f"Heartbeat: 09:00</i>"
             ),

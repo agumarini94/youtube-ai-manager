@@ -51,7 +51,10 @@ from modules.selector_ia import (
     info_desde_urls,
     keywords_disponibles,
 )
-from modules.workflow import compilar_y_generar_seo, subir_a_youtube, postear_comentario_encuesta
+from modules.workflow import (
+    compilar_y_generar_seo, subir_a_youtube, postear_comentario_encuesta,
+    ejecutar_autopilot_pipeline, ejecutar_reel_del_dia_pipeline,
+)
 from modules.texto_video import TIPOS_TEXTO, FONDOS, generar_texto_claude, generar_fondo_local, crear_video_texto
 from modules.imagen_reel import generar_pregunta_claude, descargar_imagenes, crear_reel_imagenes
 from modules.historia_reel import (
@@ -944,10 +947,49 @@ async def _iniciar_subida(bot: Bot, fecha_publicacion: str | None = None):
     await bot.send_message(chat_id=CHAT_ID, text=texto, parse_mode="HTML")
 
 
+# ── Verificación de conexión con YouTube ────────────────────────────────────────
+
+def _youtube_conectado() -> bool:
+    """
+    Verifica que exista un token de YouTube válido y autenticado, refrescándolo
+    si hace falta (mismo patrón que workflow.subir_a_youtube). No lanza excepciones:
+    devuelve False ante cualquier problema (token ausente, inválido, libs faltantes, etc).
+    """
+    try:
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request
+    except ImportError:
+        return False
+
+    token_file = Path(__file__).parent.parent / "token_youtube.json"
+    if not token_file.exists():
+        return False
+
+    try:
+        scopes = [
+            "https://www.googleapis.com/auth/youtube.upload",
+            "https://www.googleapis.com/auth/youtube.force-ssl",
+            "https://www.googleapis.com/auth/youtube.readonly",
+        ]
+        creds = Credentials.from_authorized_user_file(str(token_file), scopes)
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            with open(token_file, "w") as f:
+                f.write(creds.to_json())
+        return bool(creds.valid)
+    except Exception:
+        return False
+
+
 # ── Handlers de comandos ────────────────────────────────────────────────────────
 
 async def cmd_trabajar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != CHAT_ID:
+        return
+    if not _youtube_conectado():
+        await update.message.reply_text(
+            "⚠️ YouTube no está conectado. Por favor reconectá tu cuenta antes de continuar."
+        )
         return
     datos = estado.leer()
     if datos["estado"] != "idle":
@@ -1190,6 +1232,7 @@ async def cb_musica_elegida(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Track no disponible. Usá /cancelar y empezá de nuevo.")
         return
     track = tracks[idx]
+
     estado.actualizar(musica_ruta=track["ruta"], musica_nombre=track["nombre"], musica_seleccionada=True)
     await query.edit_message_text(
         f"🎵 <b>{html.escape(track['nombre'])}</b> elegida como música de fondo.",
@@ -1263,7 +1306,10 @@ async def cb_musica_sugerida(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    estado.actualizar(canciones_resultados=results, cancion_idx=0, estado="eligiendo_cancion")
+    estado.actualizar(
+        canciones_resultados=results, cancion_idx=0, estado="eligiendo_cancion",
+        cancion_busqueda_original=busqueda,
+    )
     await msg.edit_text(
         f"✅ <b>{html.escape(busqueda)}</b> — {len(results)} resultados. Escuchá el preview:",
         parse_mode="HTML",
@@ -1363,6 +1409,7 @@ async def cb_audio_sacar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     loop = asyncio.get_event_loop()
     track = await loop.run_in_executor(None, descargar_desde_url, cancion["url"])
+
     if not track:
         await ctx.bot.send_message(
             chat_id=CHAT_ID,
@@ -1414,6 +1461,7 @@ async def cb_volumen(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     loop = asyncio.get_event_loop()
     track = await loop.run_in_executor(None, descargar_desde_url, cancion["url"])
+
     if not track:
         await ctx.bot.send_message(
             chat_id=CHAT_ID,
@@ -1433,7 +1481,7 @@ async def cb_volumen(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         chat_id=CHAT_ID,
         text=(
             f"✅ <b>{html.escape(track['nombre'][:70])}</b> lista.\n"
-            f"<i>Volumen: {vol_label} · guardada en music/ para la próxima vez.</i>"
+            f"<i>Volumen: {vol_label} · guardada en Songs/ para la próxima vez.</i>"
         ),
         parse_mode="HTML",
     )
@@ -2177,6 +2225,7 @@ async def handle_texto(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             canciones_resultados=results,
             cancion_idx=0,
             estado="eligiendo_cancion",
+            cancion_busqueda_original=texto,
         )
         await msg.edit_text(
             f"✅ Encontré <b>{len(results)} resultados</b>. Escuchá el preview:",
@@ -5180,6 +5229,8 @@ def crear_aplicacion() -> Application:
     )
 
     app.add_handler(CommandHandler("trabajar",  cmd_trabajar))
+    app.add_handler(CommandHandler("autopilot", cmd_autopilot))
+    app.add_handler(CommandHandler("noticia_test", cmd_noticia_test))
     app.add_handler(CommandHandler("texto",        cmd_texto))
     app.add_handler(CommandHandler("imagen",       cmd_imagen))
     app.add_handler(CommandHandler("historia",     cmd_historia))
@@ -5347,3 +5398,195 @@ async def ejecutar_workflow_automatico(bot: Bot):
         return
     await bot.send_message(chat_id=CHAT_ID, text="🤖 Iniciando workflow automático...")
     await _preguntar_formato(bot)
+
+
+async def ejecutar_autopilot(bot: Bot):
+    """
+    Llamado por el scheduler diario (13:00 hora Israel) o por /autopilot.
+    Pipeline 100% headless — sin ningún paso interactivo — vía
+    workflow.ejecutar_autopilot_pipeline(). Si algo falla en cualquier paso,
+    avisa por Telegram con el motivo en vez de fallar en silencio.
+    """
+    datos = estado.leer()
+    if datos["estado"] != "idle":
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text=f"⚠️ Autopilot cancelado — proceso activo: `{datos['estado']}`",
+            parse_mode="Markdown",
+        )
+        return
+    if not _youtube_conectado():
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text="⚠️ Autopilot cancelado — YouTube no está conectado. Reconectá la cuenta desde Streamlit.",
+        )
+        return
+
+    estado.actualizar(estado="autopilot")
+    msg = await bot.send_message(chat_id=CHAT_ID, text="🤖 <b>Autopilot iniciado...</b>", parse_mode="HTML")
+
+    loop = asyncio.get_event_loop()
+
+    def progress_cb(texto):
+        asyncio.run_coroutine_threadsafe(msg.edit_text(texto, parse_mode="HTML"), loop)
+
+    try:
+        resultado = await loop.run_in_executor(None, ejecutar_autopilot_pipeline, progress_cb)
+    except Exception as e:
+        estado.reset()
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text=f"❌ <b>Autopilot falló:</b>\n<code>{html.escape(str(e)[:500])}</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    estado.reset()
+    await bot.send_message(
+        chat_id=CHAT_ID,
+        text=f"✅ <b>Autopilot — video publicado ({html.escape(resultado['tema'])}):</b>\n{resultado['url']}",
+        parse_mode="HTML",
+    )
+
+
+async def cmd_autopilot(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != CHAT_ID:
+        return
+    await ejecutar_autopilot(ctx.bot)
+
+
+# ── Reel del día — efemérides (19:00 hora Israel) ─────────────────────────────
+# Segundo reel diario, aparte del autopilot de las 13:00. El motivo sale de
+# data/efemerides.json. Si hoy no hay efeméride, ese día no se sube nada.
+
+async def ejecutar_reel_del_dia(bot: Bot, dry_run: bool = False, hoy=None):
+    """
+    Llamado por el scheduler diario (19:00 hora Israel) o por /noticia_test (dry_run).
+    Si hoy no hay efeméride avisa y corta — no es un error. Si algo falla de verdad,
+    lo reporta por Telegram con el motivo en vez de fallar en silencio.
+    """
+    etiqueta = "Reel del día (prueba)" if dry_run else "Reel del día"
+
+    datos = estado.leer()
+    if datos["estado"] != "idle":
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text=f"⚠️ {etiqueta} cancelado — proceso activo: `{datos['estado']}`",
+            parse_mode="Markdown",
+        )
+        return
+    if not dry_run and not _youtube_conectado():
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text=f"⚠️ {etiqueta} cancelado — YouTube no está conectado. Reconectá la cuenta desde Streamlit.",
+        )
+        return
+
+    estado.actualizar(estado="reel_del_dia")
+    cabecera = "🗓 <b>Reel del día — buscando la efeméride de hoy...</b>"
+    if dry_run:
+        cabecera = "🧪 <b>Reel del día — PRUEBA (no se sube)</b>\nBuscando la efeméride de hoy..."
+    msg = await bot.send_message(chat_id=CHAT_ID, text=cabecera, parse_mode="HTML")
+
+    loop = asyncio.get_event_loop()
+
+    def progress_cb(texto):
+        asyncio.run_coroutine_threadsafe(msg.edit_text(texto, parse_mode="HTML"), loop)
+
+    try:
+        res = await loop.run_in_executor(
+            None, lambda: ejecutar_reel_del_dia_pipeline(progress_cb, dry_run, hoy)
+        )
+    except Exception as e:
+        estado.reset()
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text=f"❌ <b>{etiqueta} falló:</b>\n<code>{html.escape(str(e)[:500])}</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    estado.reset()
+
+    if not res.get("ok"):
+        # Sin efeméride hoy: no se publica el segundo reel. Es el comportamiento esperado.
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text=(
+                f"🗓 <b>{etiqueta}</b> — hoy no hay efeméride en el calendario, "
+                f"así que no se sube el segundo reel."
+            ),
+            parse_mode="HTML",
+        )
+        return
+
+    ef = res["efemeride"]
+    resumen = (
+        f"<b>Motivo:</b> {html.escape(ef['jugador'])} · {html.escape(ef['tipo'])}\n"
+        f"<b>Gancho:</b> {html.escape(res['gancho'])}\n"
+        f"<b>Título:</b> {html.escape(res['titulo'])}\n"
+        f"<b>Hashtag:</b> #{html.escape(res['hashtag_usado'] or ef['hashtag'])} · "
+        f"<b>Música:</b> {html.escape(res['musica'])}\n"
+        f"<b>Fuente:</b> <i>{html.escape(ef['contexto'])}</i>"
+    )
+
+    if res["dry_run"]:
+        await msg.edit_text("✅ <b>Reel de prueba listo.</b> Enviando preview...", parse_mode="HTML")
+        enviado = False
+        preview = res.get("preview") or res["video"]
+        try:
+            if Path(preview).stat().st_size / (1024 * 1024) < 48:
+                with open(preview, "rb") as f:
+                    await bot.send_video(
+                        chat_id=CHAT_ID, video=f,
+                        caption=f"🧪 <b>PRUEBA — no se subió a YouTube</b>\n\n{resumen}",
+                        parse_mode="HTML", write_timeout=180, read_timeout=180,
+                    )
+                enviado = True
+        except Exception as e:
+            _logger.warning(f"Reel del día (prueba): no se pudo enviar el video — {e}")
+        if not enviado:
+            await bot.send_message(
+                chat_id=CHAT_ID,
+                text=(
+                    f"🧪 <b>PRUEBA — no se subió a YouTube</b>\n\n{resumen}\n\n"
+                    f"<code>{html.escape(res['video'])}</code>"
+                ),
+                parse_mode="HTML",
+            )
+        return
+
+    await bot.send_message(
+        chat_id=CHAT_ID,
+        text=f"✅ <b>Reel del día publicado</b>\n\n{resumen}\n\n{html.escape(res['url'])}",
+        parse_mode="HTML",
+    )
+
+
+async def cmd_noticia_test(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """
+    Genera el reel del día en modo dry-run: lo arma entero pero no lo sube.
+
+    /noticia_test        → usa la efeméride de hoy
+    /noticia_test 30/10  → simula ese día, para poder probar cuando hoy no hay efeméride
+    """
+    if update.effective_chat.id != CHAT_ID:
+        return
+
+    hoy = None
+    if ctx.args:
+        from datetime import date as _date
+        try:
+            dia, mes = (int(x) for x in ctx.args[0].replace("-", "/").split("/")[:2])
+            hoy = _date(datetime.now().year, mes, dia)
+        except Exception:
+            await update.message.reply_text(
+                "Formato de fecha inválido. Usá /noticia_test o /noticia_test DD/MM "
+                "(ej. /noticia_test 30/10)."
+            )
+            return
+        await update.message.reply_text(
+            f"🧪 Simulando el {hoy.strftime('%d/%m')} — el reel no se sube."
+        )
+
+    await ejecutar_reel_del_dia(ctx.bot, dry_run=True, hoy=hoy)

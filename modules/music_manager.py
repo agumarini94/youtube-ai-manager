@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-MUSIC_DIR = Path(__file__).parent.parent / "music"
+MUSIC_DIR = Path(__file__).parent.parent / "Songs"
 FFMPEG   = "/opt/homebrew/bin/ffmpeg"
 YT_DLP   = "/opt/homebrew/bin/yt-dlp"
 
@@ -188,7 +188,12 @@ def sugerir_musica_claude(contexto: str) -> dict | None:
             messages=[{"role": "user", "content": prompt}],
         )
         import json as _json
-        return _json.loads(resp.content[0].text.strip())
+        raw = resp.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        return _json.loads(raw.strip())
     except Exception:
         return None
 

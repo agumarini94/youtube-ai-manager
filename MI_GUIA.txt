@@ -44,7 +44,7 @@ ARRANCAR LA APP WEB (Streamlit)
   Opción 1 — desde Telegram:
     /ping   → responde con la hora y el estado actual
 
-  Opción 2 — desde la terminal:
+  Opción 2 — desde la terminal:oara
     launchctl list | grep youtubebot
     → Si aparece un número (PID), está corriendo.
     → Si aparece un 0 o no aparece nada, está apagado.
