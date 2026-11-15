@@ -1,338 +1,40 @@
 """
-Módulo — Calendario de Eventos Virales
-Muestra eventos próximos relevantes para planificar contenido en YouTube.
+Módulo — Calendario de Efemérides
+
+Es la pantalla de `data/efemerides.json`: la MISMA fuente de verdad que usa el reel
+de las 19:00 (`workflow.ejecutar_reel_del_dia_pipeline`). Muestra qué se va a publicar
+cada día y permite editar el dataset sin abrir el JSON a mano.
+
+Antes esta pantalla tenía su propia lista de eventos y le pedía a Claude que inventara
+fechas de fútbol, en paralelo al dataset curado del bot. Eran dos calendarios que se
+podían contradecir; quedó uno solo.
+
+El gancho y el título que se muestran acá salen de efemerides.texto_gancho() y
+efemerides.titulo() — las mismas funciones que corre el bot, no una copia.
 """
 
-import os
-import anthropic
 import streamlit as st
-from datetime import date, timedelta
+from datetime import date
+
+from modules import efemerides
 
 
-# ── Base de eventos ───────────────────────────────────────────────────────────
-# cada evento tiene: inicio, fin (opcional), nombre, categoria, emoji, ideas[]
+_MESES = ["", "enero", "febrero", "marzo", "abril", "mayo", "junio",
+          "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
 
-EVENTOS = [
-    # ── Mayo 2026 ─────────────────────────────────────────────────────────────
-    {
-        "inicio": date(2026, 5, 4),
-        "fin": None,
-        "nombre": "Star Wars Day",
-        "categoria": "Entretenimiento",
-        "emoji": "⚔️",
-        "ideas": [
-            "Fails de cosplay de Star Wars — compilación TikTok",
-            "Escenas icónicas recreadas que salieron horrible",
-            "Reacciones graciosas de personas que nunca vieron Star Wars",
-        ],
-    },
-    {
-        "inicio": date(2026, 5, 5),
-        "fin": None,
-        "nombre": "Cinco de Mayo",
-        "categoria": "Cultura",
-        "emoji": "🇲🇽",
-        "ideas": [
-            "Fails de fiestas y celebraciones latinas — compilación",
-            "Humor latino viral de TikTok para la fecha",
-            "Reacciones de gringos probando comida mexicana por primera vez",
-        ],
-    },
-    {
-        "inicio": date(2026, 5, 10),
-        "fin": None,
-        "nombre": "Día de la Madre",
-        "categoria": "Fechas Especiales",
-        "emoji": "💐",
-        "ideas": [
-            "Hijos cocinando para sus mamás — fails épicos de cocina",
-            "Regalos de Día de la Madre que salieron muy mal",
-            "Momentos tiernos y graciosos de mamás en TikTok",
-        ],
-    },
-    {
-        "inicio": date(2026, 5, 12),
-        "fin": date(2026, 5, 16),
-        "nombre": "Eurovision 2026",
-        "categoria": "Entretenimiento",
-        "emoji": "🎤",
-        "ideas": [
-            "Los momentos más extraños y virales de Eurovision — compilación",
-            "Outfits más ridículos de la historia de Eurovision",
-            "Reacciones del público que se volvieron meme",
-        ],
-    },
-    {
-        "inicio": date(2026, 5, 30),
-        "fin": date(2026, 5, 31),
-        "nombre": "Final Champions League",
-        "categoria": "Deportes",
-        "emoji": "🏟️",
-        "ideas": [
-            "Fails de jugadores en finales de Champions — compilación histórica",
-            "Reacciones de hinchas viendo la final en vivo",
-            "Los penales más nerviosos de la historia del fútbol",
-        ],
-    },
-    # ── Junio 2026 ────────────────────────────────────────────────────────────
-    {
-        "inicio": date(2026, 6, 8),
-        "fin": date(2026, 6, 8),
-        "nombre": "Roland Garros — Final",
-        "categoria": "Deportes",
-        "emoji": "🎾",
-        "ideas": [
-            "Reacciones más épicas del tenis en tierra batida",
-            "Fails y momentos virales del torneo",
-        ],
-    },
-    {
-        "inicio": date(2026, 6, 11),
-        "fin": date(2026, 7, 19),
-        "nombre": "FIFA World Cup 2026",
-        "categoria": "Deportes",
-        "emoji": "⚽",
-        "ideas": [
-            "Compilación de fails y errores épicos del Mundial 2026",
-            "Reacciones más graciosas de hinchas viendo los partidos",
-            "Los goles que no fueron — fails de arqueros y delanteros",
-            "Hinchas que predijeron resultados y fallaron completamente",
-            "Celebraciones de gol que salieron muy mal — compilación",
-            "Momentos virales de TikTok durante el Mundial",
-        ],
-    },
-    {
-        "inicio": date(2026, 6, 21),
-        "fin": None,
-        "nombre": "Día del Padre",
-        "categoria": "Fechas Especiales",
-        "emoji": "👨‍👧",
-        "ideas": [
-            "Padres intentando entender TikTok — compilación",
-            "Fails de papás siendo 'cool' con sus hijos",
-            "Momentos más tiernos y graciosos de papás en redes",
-        ],
-    },
-    # ── Julio 2026 ────────────────────────────────────────────────────────────
-    {
-        "inicio": date(2026, 7, 4),
-        "fin": None,
-        "nombre": "Independence Day (EE.UU.)",
-        "categoria": "Cultura",
-        "emoji": "🎆",
-        "ideas": [
-            "Fails épicos con fuegos artificiales del 4 de julio",
-            "BBQ fails — asados americanos que salieron desastrosos",
-            "Reacciones graciosas de extranjeros celebrando el 4 de julio",
-        ],
-    },
-    {
-        "inicio": date(2026, 7, 7),
-        "fin": date(2026, 7, 19),
-        "nombre": "Wimbledon 2026",
-        "categoria": "Deportes",
-        "emoji": "🎾",
-        "ideas": [
-            "Momentos más virales de Wimbledon — reacciones y fails",
-            "La elegancia de Wimbledon vs. los fails del público",
-        ],
-    },
-    {
-        "inicio": date(2026, 7, 19),
-        "fin": None,
-        "nombre": "Final del Mundial 2026",
-        "categoria": "Deportes",
-        "emoji": "🏆",
-        "ideas": [
-            "Reacciones más épicas de hinchas viendo la final en vivo",
-            "Compilación de los mejores momentos del Mundial completo",
-            "El antes y después de la final — reacciones de los países",
-        ],
-    },
-    # ── Agosto 2026 ──────────────────────────────────────────────────────────
-    {
-        "inicio": date(2026, 8, 24),
-        "fin": date(2026, 9, 7),
-        "nombre": "US Open 2026",
-        "categoria": "Deportes",
-        "emoji": "🎾",
-        "ideas": [
-            "Reacciones del público en el US Open — compilación viral",
-            "Momentos más tensos y graciosos del US Open",
-        ],
-    },
-    {
-        "inicio": date(2026, 8, 1),
-        "fin": date(2026, 8, 31),
-        "nombre": "Back to School",
-        "categoria": "Tendencia",
-        "emoji": "🎒",
-        "ideas": [
-            "Fails épicos del primer día de clases — compilación TikTok",
-            "Padres comprando útiles — momentos graciosos",
-            "Primer día de colegio: expectativa vs. realidad",
-            "Reacciones de papás cuando los chicos vuelven al cole",
-        ],
-    },
-    # ── Septiembre 2026 ──────────────────────────────────────────────────────
-    {
-        "inicio": date(2026, 9, 1),
-        "fin": date(2026, 9, 1),
-        "nombre": "Inicio temporada NFL",
-        "categoria": "Deportes",
-        "emoji": "🏈",
-        "ideas": [
-            "Fails y tackles más épicos del fútbol americano — compilación",
-            "Reacciones de fans en el estadio que se volvieron virales",
-        ],
-    },
-    # ── Octubre 2026 ─────────────────────────────────────────────────────────
-    {
-        "inicio": date(2026, 10, 31),
-        "fin": None,
-        "nombre": "Halloween",
-        "categoria": "Fechas Especiales",
-        "emoji": "🎃",
-        "ideas": [
-            "Sustos de Halloween que salieron demasiado bien — compilación viral",
-            "Disfraces de Halloween que fallaron épicamente",
-            "Reacciones de niños cuando los asustan — fails graciosos",
-            "Decoraciones de Halloween que salieron desastrosas",
-            "Compilación: los mejores jumpscares de TikTok en Halloween",
-        ],
-    },
-    # ── Noviembre 2026 ───────────────────────────────────────────────────────
-    {
-        "inicio": date(2026, 11, 1),
-        "fin": date(2026, 11, 2),
-        "nombre": "Día de los Muertos",
-        "categoria": "Cultura",
-        "emoji": "💀",
-        "ideas": [
-            "Altares más creativos del Día de Muertos en TikTok",
-            "Maquillajes de calavera que salieron horrible — compilación",
-            "Celebraciones más virales del Día de los Muertos",
-        ],
-    },
-    {
-        "inicio": date(2026, 11, 26),
-        "fin": None,
-        "nombre": "Thanksgiving (EE.UU.)",
-        "categoria": "Cultura",
-        "emoji": "🦃",
-        "ideas": [
-            "Turkey fails — pavos del Thanksgiving que salieron desastrosos",
-            "Familias en Thanksgiving — momentos graciosos en TikTok",
-            "Fails de cocina del Día de Acción de Gracias",
-        ],
-    },
-    {
-        "inicio": date(2026, 11, 27),
-        "fin": None,
-        "nombre": "Black Friday",
-        "categoria": "Tendencia",
-        "emoji": "🛒",
-        "ideas": [
-            "Peleas y chaos en el Black Friday — compilación épica",
-            "Gente haciendo cola toda la noche para entrar al shopping",
-            "Compras del Black Friday que no valieron para nada — fails",
-        ],
-    },
-    # ── Diciembre 2026 ───────────────────────────────────────────────────────
-    {
-        "inicio": date(2026, 12, 25),
-        "fin": None,
-        "nombre": "Navidad",
-        "categoria": "Fechas Especiales",
-        "emoji": "🎄",
-        "ideas": [
-            "Decoraciones navideñas que salieron desastrosas — fails épicos",
-            "Regalos de Navidad con reacciones inesperadas — compilación TikTok",
-            "Papá Noel con niños asustados — los videos más virales",
-            "Luces de Navidad que fallaron espectacularmente",
-            "Chicos creyendo todavía en Papá Noel — momentos tiernos",
-        ],
-    },
-    {
-        "inicio": date(2026, 12, 31),
-        "fin": None,
-        "nombre": "Nochevieja / Año Nuevo",
-        "categoria": "Fechas Especiales",
-        "emoji": "🥂",
-        "ideas": [
-            "Brindis de Año Nuevo que salieron completamente mal",
-            "Fails con fuegos artificiales de fin de año — compilación",
-            "Reacciones más graciosas esperando la medianoche en TikTok",
-            "Propósitos de Año Nuevo que fallaron en el primer día",
-        ],
-    },
-    # ── 2027 ─────────────────────────────────────────────────────────────────
-    {
-        "inicio": date(2027, 2, 7),
-        "fin": None,
-        "nombre": "Super Bowl LXI",
-        "categoria": "Deportes",
-        "emoji": "🏈",
-        "ideas": [
-            "Reacciones de hinchas en el Super Bowl — las más virales",
-            "Fails del medio tiempo y los comerciales más raros",
-            "El Super Bowl explicado para personas que no entienden nada",
-        ],
-    },
-    {
-        "inicio": date(2027, 2, 14),
-        "fin": None,
-        "nombre": "San Valentín",
-        "categoria": "Fechas Especiales",
-        "emoji": "💘",
-        "ideas": [
-            "Propuestas de San Valentín que salieron muy mal — fails románticos",
-            "Cenas románticas que se convirtieron en desastre — compilación",
-            "Regalos de San Valentín más raros que encontraron en TikTok",
-        ],
-    },
-    {
-        "inicio": date(2027, 3, 17),
-        "fin": None,
-        "nombre": "St. Patrick's Day",
-        "categoria": "Cultura",
-        "emoji": "🍀",
-        "ideas": [
-            "Fails de las celebraciones del St. Patrick's en TikTok",
-            "Personas teñidas de verde que no querían — compilación",
-        ],
-    },
-]
-
-COLORES_CATEGORIA = {
-    "Deportes":         "#1e3a5f",
-    "Entretenimiento":  "#3d1a5f",
-    "Fechas Especiales": "#1a3d1f",
-    "Cultura":          "#3d2a1a",
-    "Tendencia":        "#2a1a3d",
+_COLOR_TIPO = {
+    "homenaje":    "#2d1b2e",
+    "aniversario": "#1b2436",
+    "cumpleaños":  "#1e2e1b",
 }
 
-BADGES_CATEGORIA = {
-    "Deportes":         "🏅 Deportes",
-    "Entretenimiento":  "🎭 Entretenimiento",
-    "Fechas Especiales": "📅 Fecha Especial",
-    "Cultura":          "🌍 Cultura",
-    "Tendencia":        "📈 Tendencia",
+_BADGE_TIPO = {
+    "homenaje":    "🕯️ Homenaje",
+    "aniversario": "📅 Aniversario",
+    "cumpleaños":  "🎂 Cumpleaños",
 }
 
-
-def _dias_hasta(inicio: date) -> int:
-    return (inicio - date.today()).days
-
-
-def _formato_fecha(inicio: date, fin: date | None) -> str:
-    meses = ["", "Ene", "Feb", "Mar", "Abr", "May", "Jun",
-             "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
-    if fin and fin != inicio:
-        if inicio.month == fin.month:
-            return f"{inicio.day}–{fin.day} {meses[inicio.month]} {inicio.year}"
-        return f"{inicio.day} {meses[inicio.month]} – {fin.day} {meses[fin.month]} {fin.year}"
-    return f"{inicio.day} {meses[inicio.month]} {inicio.year}"
+_TIPOS = ["cumpleaños", "aniversario", "homenaje"]
 
 
 def _urgencia_color(dias: int) -> str:
@@ -348,96 +50,201 @@ def _urgencia_label(dias: int) -> str:
         return "¡HOY!"
     if dias == 1:
         return "¡Mañana!"
-    if dias <= 7:
-        return f"En {dias} días"
-    if dias <= 30:
-        return f"En {dias} días"
     return f"En {dias} días"
 
 
-def _generar_ideas_claude(evento: dict) -> str:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        return "❌ No hay ANTHROPIC_API_KEY configurada."
+def _formato_fecha(f: date) -> str:
+    return f"{f.day} de {_MESES[f.month]} de {f.year}"
 
-    ideas_base = "\n".join(f"- {i}" for i in evento["ideas"])
-    fecha_str = _formato_fecha(evento["inicio"], evento["fin"])
 
-    prompt = f"""Sos un experto en contenido viral de fútbol para YouTube. El canal es viralesDelFutbol, enfocado en compilaciones de goles, highlights, datos curiosos, debates y momentos épicos del fútbol para audiencia hispanohablante (principalmente Argentina y LATAM).
+def _campos_entrada(entrada: dict | None, prefijo: str) -> dict:
+    """
+    Formulario de una efeméride. Devuelve el dict con el formato del dataset.
+    `entrada` es None para un alta y la entrada actual para una edición.
+    """
+    e = entrada or {}
 
-Evento próximo: {evento['emoji']} {evento['nombre']} ({fecha_str})
-Categoría: {evento['categoria']}
-
-Ideas iniciales que ya tenemos:
-{ideas_base}
-
-Generá 5 ideas NUEVAS y específicas de videos relacionados con este evento y con fútbol, pensando en:
-- Qué tipo de contenido de fútbol se va a viralizar alrededor de esta fecha
-- Títulos concretos que usen keywords de búsqueda de YouTube (máx 60 chars, con emoji)
-- Formatos que funcionan en el nicho de fútbol (goles, highlights, debates, ¿Cuál elegís?, datos curiosos)
-
-Respondé SOLO con una lista numerada de las 5 ideas. Sin intro, sin conclusión."""
-
-    try:
-        cliente = anthropic.Anthropic(api_key=api_key)
-        resp = cliente.messages.create(
-            model="claude-opus-4-6",
-            max_tokens=600,
-            messages=[{"role": "user", "content": prompt}],
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        dia = st.number_input("Día", min_value=1, max_value=31,
+                              value=int(e.get("dia", 1)), key=f"{prefijo}_dia")
+    with col2:
+        mes = st.number_input("Mes", min_value=1, max_value=12,
+                              value=int(e.get("mes", 1)), key=f"{prefijo}_mes")
+    with col3:
+        anio = st.number_input(
+            "Año del hecho", min_value=1850, max_value=efemerides.hoy_israel().year,
+            value=int(e.get("anio", 2000)), key=f"{prefijo}_anio",
+            help="El año en que nació el jugador, falleció, o pasó el hecho. "
+                 "De acá sale el número de años que se muestra en el gancho.",
         )
-        return resp.content[0].text
-    except Exception as e:
-        return f"❌ Error al generar ideas: {e}"
+
+    tipo = st.selectbox(
+        "Tipo", _TIPOS,
+        index=_TIPOS.index(e["tipo"]) if e.get("tipo") in _TIPOS else 0,
+        key=f"{prefijo}_tipo",
+        help="Si dos efemérides caen el mismo día, el bot prioriza "
+             "homenaje > aniversario > cumpleaños.",
+    )
+
+    col4, col5 = st.columns(2)
+    with col4:
+        jugador = st.text_input("Jugador (nombre completo)", value=e.get("jugador", ""),
+                                key=f"{prefijo}_jugador",
+                                placeholder="Diego Maradona")
+    with col5:
+        corto = st.text_input("Nombre corto", value=e.get("corto", ""),
+                              key=f"{prefijo}_corto", placeholder="Maradona",
+                              help="El que entra en el gancho de pantalla, en MAYÚSCULAS.")
+
+    hashtag = st.text_input(
+        "Hashtag de TikTok (sin #)", value=e.get("hashtag", ""),
+        key=f"{prefijo}_hashtag", placeholder="maradona",
+        help="Con este hashtag el bot busca los clips. En minúsculas, sin espacios "
+             "ni acentos. Si no alcanza, el bot reintenta con goals/skills/edit/highlights.",
+    )
+
+    contexto = st.text_area(
+        "Contexto", value=e.get("contexto", ""), height=80, key=f"{prefijo}_contexto",
+        help="Dato verificado del hecho. No se publica tal cual, pero es la fuente de "
+             "la que sale todo: si no está acá, el reel no lo afirma.",
+    )
+
+    evento = st.text_input(
+        "Evento (solo aniversarios)", value=e.get("evento", ""), key=f"{prefijo}_evento",
+        placeholder="el gol a los ingleses",
+        help="Lo interpola el título por defecto de los aniversarios: "
+             "'Hoy hace N años: {evento}'.",
+    )
+
+    with st.expander("Opcionales — pisar el gancho y el título automáticos"):
+        st.caption(
+            "Dejalos vacíos y se usan las plantillas por tipo. Se completan a mano "
+            "para los casos raros: por ejemplo el cumpleaños de alguien que ya falleció, "
+            "que no 'cumple' años. Placeholders: {n}, {CORTO}, {corto}, {JUGADOR}, "
+            "{jugador}, {evento}."
+        )
+        gancho = st.text_input("Gancho a medida", value=e.get("gancho", ""),
+                               key=f"{prefijo}_gancho", placeholder="{n} AÑOS DEL 10")
+        titulo = st.text_input("Título a medida", value=e.get("titulo", ""),
+                               key=f"{prefijo}_titulo",
+                               placeholder="{n} años del nacimiento de {jugador} 🎂")
+        fallecido = st.checkbox(
+            "El jugador ya falleció", value=bool(e.get("fallecido")),
+            key=f"{prefijo}_fallecido",
+            help="Marca el reel como respetuoso: música tranquila, sin encuesta "
+                 "ni frase polémica al final.",
+        )
+
+    nueva = {
+        "id": efemerides.generar_id(dia, mes, corto),
+        "dia": int(dia),
+        "mes": int(mes),
+        "anio": int(anio),
+        "tipo": tipo,
+        "jugador": jugador.strip(),
+        "corto": corto.strip(),
+        "hashtag": hashtag.strip().lower(),
+        "contexto": contexto.strip(),
+    }
+    # Los opcionales solo entran si tienen valor, para no ensuciar el JSON.
+    if evento.strip():
+        nueva["evento"] = evento.strip()
+    if gancho.strip():
+        nueva["gancho"] = gancho.strip()
+    if titulo.strip():
+        nueva["titulo"] = titulo.strip()
+    if fallecido:
+        nueva["fallecido"] = True
+    return nueva
+
+
+def _previsualizar(entrada: dict, fecha: date) -> None:
+    """Muestra el gancho y el título que generaría esta entrada en esa fecha."""
+    try:
+        gancho = efemerides.texto_gancho(entrada, fecha)
+        titulo = efemerides.titulo(entrada, fecha)
+    except Exception as e:  # plantilla a medida con un placeholder que no existe
+        st.error(f"No se pudo armar el texto: {e}")
+        return
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.caption("Gancho en pantalla")
+        st.code(gancho, language=None)
+    with col2:
+        st.caption(f"Título de YouTube — {len(titulo)} caracteres")
+        st.code(titulo, language=None)
+    if efemerides.es_respetuosa(entrada):
+        st.caption("🕯️ Reel respetuoso: música tranquila, sin encuesta ni frase polémica.")
 
 
 def mostrar_calendario():
-    st.title("📅 Calendario de Eventos Virales")
+    st.title("📅 Calendario de Efemérides")
     st.markdown(
-        "Eventos próximos para planificar tu contenido. "
-        "Publicar alrededor de estas fechas multiplica las chances de viralizar."
+        "El dataset del **reel de las 19:00**. Cada día que tiene efeméride, el bot "
+        "arma y publica un reel solo; los días sin efeméride no publica nada."
     )
 
-    hoy = date.today()
+    with st.expander("❓ ¿Cómo funciona?"):
+        st.markdown("""
+**Esta pantalla edita `data/efemerides.json`**, que es la única fuente de verdad del
+reel de las 19:00 (hora de Israel). El gancho que se quema en pantalla y el título de
+YouTube salen de acá, nunca de texto libre de Claude: así el reel no afirma nada que
+no esté en el dataset.
 
-    # ── Filtros ───────────────────────────────────────────────────────────────
-    col_f1, col_f2 = st.columns([2, 1])
-    with col_f1:
-        categorias = ["Todas"] + sorted({e["categoria"] for e in EVENTOS})
-        cat_sel = st.selectbox("Filtrar por categoría", categorias, key="cal_cat")
-    with col_f2:
-        meses_adelante = st.selectbox(
-            "Mostrar próximos",
-            [1, 2, 3, 6, 12],
-            index=2,
-            format_func=lambda m: f"{m} mes{'es' if m > 1 else ''}",
-            key="cal_meses",
+**Qué hace el bot con cada entrada:**
+1. A las 19:00 busca si hoy hay efeméride. Si no hay, no publica — eso es lo esperado.
+2. Si hay más de una el mismo día, prioriza **homenaje > aniversario > cumpleaños**, y
+   dentro del mismo tipo elige la que hace más tiempo no se usa.
+3. Busca clips en TikTok con el **hashtag**, y si no alcanzan reintenta con
+   `hashtag + goals/skills/edit/highlights`.
+4. Quema el **gancho** en pantalla y sube el video con el **título**.
+
+**El año es el del hecho**, no el de la efeméride: para un cumpleaños va el año de
+nacimiento, para un homenaje el del fallecimiento. El bot calcula los años solo.
+        """)
+
+    hoy = efemerides.hoy_israel()
+    todas = efemerides.cargar()
+
+    if not todas:
+        st.error(
+            "No se pudo leer `data/efemerides.json` o está vacío. "
+            "Si el archivo existe, revisá que sea JSON válido antes de editar desde acá."
         )
 
-    limite = hoy + timedelta(days=meses_adelante * 30)
+    # ── Próximas efemérides ───────────────────────────────────────────────────
+    col_f1, col_f2 = st.columns([1, 2])
+    with col_f1:
+        dias = st.selectbox(
+            "Mostrar próximos", [30, 60, 90, 365], index=0,
+            format_func=lambda d: "Todo el año" if d == 365 else f"{d} días",
+            key="efem_dias",
+        )
+    with col_f2:
+        tipos_sel = st.multiselect(
+            "Filtrar por tipo", _TIPOS, default=_TIPOS, key="efem_tipos",
+        )
 
-    # Filtrar y ordenar
-    eventos_filtrados = [
-        e for e in EVENTOS
-        if e["inicio"] >= hoy
-        and e["inicio"] <= limite
-        and (cat_sel == "Todas" or e["categoria"] == cat_sel)
-    ]
-    eventos_filtrados.sort(key=lambda e: e["inicio"])
+    proximas = [(f, e) for f, e in efemerides.proximas(dias, hoy)
+                if e["tipo"] in tipos_sel]
 
-    if not eventos_filtrados:
-        st.info("No hay eventos en el período seleccionado para esa categoría.")
-        return
-
-    st.markdown(f"**{len(eventos_filtrados)} eventos** en los próximos {meses_adelante} meses")
+    st.caption(
+        f"{len(proximas)} efemérides en el período · {len(todas)} en el dataset completo "
+        f"· hoy en Israel es {_formato_fecha(hoy)}"
+    )
     st.markdown("---")
 
-    # ── Cards de eventos ──────────────────────────────────────────────────────
-    for evento in eventos_filtrados:
-        dias = _dias_hasta(evento["inicio"])
-        color_urgencia = _urgencia_color(dias)
-        badge_cat = BADGES_CATEGORIA.get(evento["categoria"], evento["categoria"])
-        fecha_str = _formato_fecha(evento["inicio"], evento["fin"])
-        color_fondo = COLORES_CATEGORIA.get(evento["categoria"], "#1a1a2e")
+    if not proximas:
+        st.info("No hay efemérides en el período y los tipos seleccionados.")
+
+    for fecha, entrada in proximas:
+        dias_faltan = (fecha - hoy).days
+        color_urgencia = _urgencia_color(dias_faltan)
+        color_fondo = _COLOR_TIPO.get(entrada["tipo"], "#1a1a2e")
+        badge = _BADGE_TIPO.get(entrada["tipo"], entrada["tipo"])
+        n_anios = efemerides.anios(entrada, fecha)
 
         st.markdown(
             f"""
@@ -450,7 +257,7 @@ def mostrar_calendario():
             ">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <span style="font-size:20px; font-weight:700; color:#fff;">
-                        {evento['emoji']} {evento['nombre']}
+                        {entrada['jugador']}
                     </span>
                     <span style="
                         background:{color_urgencia};
@@ -459,37 +266,67 @@ def mostrar_calendario():
                         padding:3px 12px;
                         font-size:13px;
                         font-weight:700;
-                    ">{_urgencia_label(dias)}</span>
+                    ">{_urgencia_label(dias_faltan)}</span>
                 </div>
                 <div style="margin-top:4px; color:#aaa; font-size:13px;">
-                    📆 {fecha_str} &nbsp;·&nbsp; {badge_cat}
+                    📆 {_formato_fecha(fecha)} &nbsp;·&nbsp; {badge} &nbsp;·&nbsp;
+                    {n_anios} años &nbsp;·&nbsp; <code>#{entrada['hashtag']}</code>
                 </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-        with st.expander(f"Ver ideas de contenido para {evento['nombre']}"):
-            st.markdown("**Ideas pre-armadas para tu canal:**")
-            for idea in evento["ideas"]:
-                st.markdown(f"- {idea}")
+        with st.expander(f"Ver qué publicaría el {fecha.day}/{fecha.month} · editar · borrar"):
+            _previsualizar(entrada, fecha)
+            st.caption("Contexto (la fuente del dato)")
+            st.markdown(f"> {entrada.get('contexto', '—')}")
+            st.caption(f"ID: `{entrada['id']}`")
 
-            st.markdown("")
+            st.markdown("---")
+            tab_editar, tab_borrar = st.tabs(["✏️ Editar", "🗑️ Borrar"])
 
-            key_btn = f"btn_ai_{evento['nombre'].replace(' ', '_')}"
-            key_result = f"ai_result_{evento['nombre'].replace(' ', '_')}"
+            with tab_editar:
+                editada = _campos_entrada(entrada, f"ed_{entrada['id']}")
+                st.caption("Vista previa con los valores de arriba:")
+                _previsualizar(editada, efemerides.proxima_fecha(editada, hoy))
+                if st.button("💾 Guardar cambios", key=f"save_{entrada['id']}",
+                             type="primary", use_container_width=True):
+                    errores = efemerides.validar(editada, todas, id_original=entrada["id"])
+                    if errores:
+                        for err in errores:
+                            st.error(err)
+                    else:
+                        restantes = [e for e in todas if e["id"] != entrada["id"]]
+                        efemerides.guardar(restantes + [editada])
+                        st.success(f"✅ Guardada: {editada['jugador']}")
+                        st.rerun()
 
-            if st.button(
-                "✨ Generar más ideas con Claude AI",
-                key=key_btn,
-                use_container_width=True,
-            ):
-                with st.spinner("Generando ideas..."):
-                    resultado = _generar_ideas_claude(evento)
-                st.session_state[key_result] = resultado
+            with tab_borrar:
+                st.warning(
+                    f"Se va a borrar **{entrada['jugador']}** del dataset. "
+                    f"El {fecha.day}/{fecha.month} deja de tener reel salvo que haya "
+                    "otra efeméride ese día."
+                )
+                if st.checkbox("Sí, borrar esta efeméride", key=f"conf_{entrada['id']}"):
+                    if st.button("🗑️ Borrar definitivamente", key=f"del_{entrada['id']}",
+                                 use_container_width=True):
+                        efemerides.guardar([e for e in todas if e["id"] != entrada["id"]])
+                        st.success("Borrada.")
+                        st.rerun()
 
-            if key_result in st.session_state:
-                st.markdown("**Ideas generadas por Claude:**")
-                st.markdown(st.session_state[key_result])
-
-        st.markdown("")
+    # ── Alta ──────────────────────────────────────────────────────────────────
+    st.markdown("---")
+    with st.expander("➕ Agregar una efeméride nueva"):
+        nueva = _campos_entrada(None, "nueva")
+        st.caption("Vista previa:")
+        _previsualizar(nueva, efemerides.proxima_fecha(nueva, hoy))
+        if st.button("➕ Agregar al dataset", type="primary", use_container_width=True):
+            errores = efemerides.validar(nueva, todas)
+            if errores:
+                for err in errores:
+                    st.error(err)
+            else:
+                efemerides.guardar(todas + [nueva])
+                st.success(f"✅ Agregada: {nueva['jugador']} — {nueva['dia']}/{nueva['mes']}")
+                st.rerun()

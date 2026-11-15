@@ -89,6 +89,23 @@ def _normalizar_titulo(titulo: str) -> str:
     return " ".join(texto.split())
 
 
+def similitud_con_historial(titulo: str, historial: list[str]) -> float:
+    """
+    Qué tanto se parece `titulo` al título más parecido de `historial`, de 0 a 1.
+
+    Es la métrica con la que el autopilot elige entre los candidatos: gana el que
+    saca el parecido máximo más bajo. La web la muestra como porcentaje para que se
+    vea por qué se recomienda uno y no otro.
+    """
+    previos = [n for n in (_normalizar_titulo(h) for h in historial) if n]
+    if not previos:
+        return 0.0
+    actual = _normalizar_titulo(titulo)
+    if not actual:
+        return 1.0
+    return max(SequenceMatcher(None, actual, p).ratio() for p in previos)
+
+
 def elegir_titulo_menos_repetido(candidatos: list[str], historial: list[str],
                                  max_chars: int = 60) -> str | None:
     """
@@ -104,17 +121,10 @@ def elegir_titulo_menos_repetido(candidatos: list[str], historial: list[str],
     if not validos:
         return None
 
-    previos = [n for n in (_normalizar_titulo(h) for h in historial) if n]
-    if not previos:
+    if not historial:
         return validos[0]
 
-    def similitud_maxima(candidato: str) -> float:
-        actual = _normalizar_titulo(candidato)
-        if not actual:
-            return 1.0
-        return max(SequenceMatcher(None, actual, p).ratio() for p in previos)
-
-    return min(validos, key=similitud_maxima)
+    return min(validos, key=lambda c: similitud_con_historial(c, historial))
 
 
 def generar_seo(descripcion: str, tipo: str, canal_handle: str, idioma: str,
@@ -170,6 +180,7 @@ ENCUESTA PARA COMENTARIO FIJADO (campo "encuesta" en el JSON):
     # Con el flag en False los tres quedan vacíos y el prompt no cambia en nada.
     jugador_txt = ""
     candidatos_schema = ""
+    reglas_candidatos = ""
     reglas_titulo = """REGLAS para todos los títulos (principal y variaciones):
 - Máximo 45 caracteres incluyendo emoji
 - Empezá con emoji llamativo
@@ -195,7 +206,9 @@ ENCUESTA PARA COMENTARIO FIJADO (campo "encuesta" en el JSON):
 - Máximo 45 caracteres incluyendo emoji
 - Empezá con emoji llamativo
 - NUNCA: "Compilación de...", "Los mejores...", títulos de más de 50 chars
-- Las 4 variaciones deben ser distintas entre sí
+- Las 4 variaciones deben ser distintas entre sí"""
+
+        reglas_candidatos = """
 
 REGLAS para los 3 "candidatos" — de acá sale el título que se publica:
 - Menos de 60 caracteres cada uno, contando emojis y espacios
@@ -245,7 +258,7 @@ Generá el paquete SEO en JSON:
   "encuesta": {encuesta_schema}
 }}
 
-{reglas_titulo}
+{reglas_titulo}{reglas_candidatos}
 
 Respondé SOLO con el JSON válido, sin texto extra."""
     else:
@@ -253,14 +266,14 @@ Respondé SOLO con el JSON válido, sin texto extra."""
 
 DESCRIPCIÓN DEL VIDEO: {descripcion}
 TIPO DE CONTENIDO: {tipo}
-IDIOMA: {idioma}{angulo_txt}{clips_txt}
+IDIOMA: {idioma}{angulo_txt}{jugador_txt}{clips_txt}
 {handle_txt}
 {encuesta_instrucciones}
 
 Generá el paquete SEO completo en JSON:
 
 {{
-  "titulo": "Título viral (máx 70 caracteres, con emoji al inicio, que genere curiosidad y ganas de clickear)",
+  "titulo": "Título viral (máx 70 caracteres, con emoji al inicio, que genere curiosidad y ganas de clickear)",{candidatos_schema}
   "variaciones": [
     {{"estilo": "🔢 Con número", "titulo": "Variación con número específico (Los 10..., 5 veces que...), máx 70 chars"}},
     {{"estilo": "❓ Curiosity gap", "titulo": "Variación que genera intriga o sorpresa sin revelar el final, máx 70 chars"}},
@@ -277,7 +290,7 @@ Reglas:
 - Las 4 variaciones deben ser distintas entre sí y del título principal
 - Hashtags al final de la descripción con # — incluir siempre #futbol #mundial2026
 - Tags del array sin # y en minúsculas
-- Respondé SOLO con el JSON válido, sin texto extra."""
+- Respondé SOLO con el JSON válido, sin texto extra.{reglas_candidatos}"""
 
     try:
         cliente = anthropic.Anthropic(api_key=api_key)
@@ -503,6 +516,14 @@ Cuando ya tenés el video editado y listo para subir, pero necesitás el título
             ["Español latino", "Español de España", "Inglés americano"]
         )
 
+    jugador = st.text_input(
+        "Jugador que protagoniza el video (opcional)",
+        key="seo_jugador",
+        placeholder="Messi",
+        help="Los 3 candidatos de título van a empezar con este nombre. Si lo dejás "
+             "vacío, Claude lo deduce del video.",
+    )
+
     # ── Generar ───────────────────────────────────────────────
     st.markdown("---")
     generar = st.button("✨ Generar SEO completo", type="primary", use_container_width=True)
@@ -514,7 +535,12 @@ Cuando ya tenés el video editado y listo para subir, pero necesitás el título
 
         spinner_msg = "Claude está viendo el video y generando el SEO..." if frames_b64 else "Claude está generando el SEO..."
         with st.spinner(spinner_msg):
-            resultado = generar_seo(descripcion, tipo, canal_handle, idioma, frames_b64, angulo=angulo)
+            # candidatos_titulo=True: los 3 candidatos con el jugador al principio y,
+            # sobre todo, la prohibición de títulos sobre muertes, lesiones, salud o
+            # noticias sin confirmar. Es el mismo prompt que usa el autopilot.
+            resultado = generar_seo(descripcion, tipo, canal_handle, idioma, frames_b64,
+                                    angulo=angulo, candidatos_titulo=True,
+                                    jugador=jugador.strip())
 
         if "error" in resultado:
             st.error(resultado["error"])
@@ -548,10 +574,66 @@ Cuando ya tenés el video editado y listo para subir, pero necesitás el título
         color = "🟢" if chars <= 60 else "🟡" if chars <= 70 else "🔴"
         st.caption(f"{color} {chars}/70 caracteres")
 
+        # ── Candidatos de título, con su parecido al historial ──────────────
+        # El autopilot publica el candidato con el parecido más bajo. Acá se muestran
+        # los 3 con su puntaje para que se vea por qué, y elegís vos.
+        candidatos = [
+            c.get("titulo", "").strip() for c in resultado.get("candidatos", [])
+            if isinstance(c, dict) and c.get("titulo", "").strip()
+        ]
+        if candidatos:
+            try:
+                from modules.historial import ultimos_titulos
+                historial = ultimos_titulos(100)
+            except Exception:
+                historial = []
+
+            puntajes = [(c, similitud_con_historial(c, historial)) for c in candidatos]
+            # El recomendado es el que menos se parece, entre los que entran en 60 chars
+            validos = [(c, sc) for c, sc in puntajes if len(c) < 60]
+            recomendado = min(validos, key=lambda par: par[1])[0] if validos else None
+
+            st.markdown("---")
+            st.subheader("🏆 Candidatos de título")
+            if historial:
+                st.caption(
+                    f"Comparados contra los últimos {len(historial)} títulos del canal. "
+                    "Menos parecido = más chance de que el algoritmo lo trate como algo nuevo."
+                )
+            else:
+                st.caption(
+                    "⚠️ El historial de títulos está vacío, así que no hay con qué comparar. "
+                    "Corré `python cargar_historial_titulos.py` para traerlos del canal."
+                )
+
+            for i, (cand, score) in enumerate(puntajes):
+                col_txt, col_btn = st.columns([5, 1])
+                with col_txt:
+                    marca = " &nbsp;·&nbsp; ⭐ **recomendado**" if cand == recomendado else ""
+                    largo_ok = "🟢" if len(cand) < 60 else "🔴"
+                    pct = round(score * 100)
+                    color_sc = "🟢" if pct < 40 else "🟡" if pct < 60 else "🔴"
+                    st.markdown(f"**{cand}**{marca}", unsafe_allow_html=True)
+                    st.caption(
+                        f"{color_sc} {pct}% de parecido al historial &nbsp;·&nbsp; "
+                        f"{largo_ok} {len(cand)}/60 caracteres"
+                        + ("" if len(cand) < 60 else " — el autopilot lo descartaría")
+                    )
+                with col_btn:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    if st.button("Usar", key=f"usar_cand_{i}", use_container_width=True):
+                        st.session_state["seo_titulo_override"] = cand
+                        st.rerun()
+
+            st.caption(
+                "🔒 Estos candidatos no pueden hablar de muertes, lesiones, salud ni "
+                "noticias sin confirmar — misma regla que el autopilot."
+            )
+
         # Variaciones de título
         variaciones = resultado.get("variaciones", [])
         if variaciones:
-            with st.expander("🔀 Variaciones de título alternativas", expanded=True):
+            with st.expander("🔀 Variaciones de título alternativas", expanded=not candidatos):
                 for i, var in enumerate(variaciones):
                     col_txt, col_btn = st.columns([5, 1])
                     with col_txt:
