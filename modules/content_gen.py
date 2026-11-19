@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 import base64
 from pathlib import Path
+from modules.claude_util import texto_respuesta
 
 
 def extraer_video_id(url: str) -> str | None:
@@ -175,7 +176,7 @@ Sé breve y directo. Esta descripción se usará para generar el guión."""
             max_tokens=500,
             messages=[{"role": "user", "content": contenido_mensaje}]
         )
-        analisis = respuesta.content[0].text
+        analisis = texto_respuesta(respuesta)
         return {"analisis": analisis, "frames_extraidos": len(frames)}
     except Exception as e:
         st.error(f"❌ Error al analizar el video: {e}")
@@ -269,7 +270,7 @@ IMPORTANTE: Responde ÚNICAMENTE con el JSON válido, sin texto adicional antes 
             messages=[{"role": "user", "content": contenido_mensaje}]
         )
 
-        texto_respuesta = mensaje.content[0].text.strip()
+        texto_respuesta = texto_respuesta(mensaje).strip()
 
         # Limpiar posibles bloques de código markdown
         if texto_respuesta.startswith("```"):

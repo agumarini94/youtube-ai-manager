@@ -13,6 +13,7 @@ from pathlib import Path
 
 import anthropic
 import requests
+from modules.claude_util import texto_respuesta
 
 try:
     import cloudscraper
@@ -1021,7 +1022,7 @@ def _claude_seleccionar(candidatos: list[dict], n: int, pista: str | None = None
                 f"Respondé SOLO los números EN EL ORDEN EXACTO, separados por coma. Ej: 7,2,15,4"
             )}],
         )
-        indices = [int(x.strip()) - 1 for x in resp.content[0].text.strip().split(",")]
+        indices = [int(x.strip()) - 1 for x in texto_respuesta(resp).strip().split(",")]
         return [candidatos[i] for i in indices if 0 <= i < len(candidatos)][:n]
     except Exception:
         candidatos.sort(key=lambda x: x.get("vistas", 0), reverse=True)

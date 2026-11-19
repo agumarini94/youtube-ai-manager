@@ -14,6 +14,7 @@ import re
 import unicodedata
 from difflib import SequenceMatcher
 from pathlib import Path
+from modules.claude_util import texto_respuesta
 
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
 FFPROBE = "/opt/homebrew/bin/ffprobe"
@@ -328,7 +329,7 @@ Reglas:
             messages=[{"role": "user", "content": contenido}]
         )
 
-        texto = respuesta.content[0].text.strip()
+        texto = texto_respuesta(respuesta).strip()
         if texto.startswith("```"):
             texto = texto.split("```")[1]
             if texto.startswith("json"):
@@ -347,6 +348,81 @@ Reglas:
         }
     except Exception as e:
         return {"error": f"❌ Error: {e}"}
+
+
+def _formato_por_resolucion(ruta_video: str) -> str:
+    """
+    "reel" si el video es vertical, "video" si no. Es lo que decide qué prompt usa
+    generar_seo(). Ante cualquier problema con ffprobe devuelve "video", que es el
+    prompt más conservador.
+    """
+    try:
+        r = subprocess.run(
+            [FFPROBE, "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height",
+             "-of", "csv=p=0:s=x", ruta_video],
+            capture_output=True, text=True, timeout=15,
+        )
+        ancho, alto = (int(v) for v in r.stdout.strip().split("x")[:2])
+        return "reel" if alto > ancho else "video"
+    except Exception:
+        return "video"
+
+
+def generar_seo_automatico(ruta_video: str, clips: list[dict] | None = None,
+                           jugador: str = "") -> dict:
+    """
+    Paquete SEO completo para un video ya terminado, con el mismo criterio que el
+    autopilot de las 13:00 (`workflow._compilar_reel_autopilot`): frames del video,
+    `candidatos_titulo=True` — que trae los 3 candidatos y, sobre todo, la prohibición
+    de títulos sobre muertes, lesiones, salud o noticias sin confirmar — y el título
+    final elegido por el que menos se parece al historial del canal.
+
+    No duplica nada del bot: compone `extraer_frames_thumbnail`, `generar_seo` y
+    `workflow._elegir_titulo_autopilot`, que son las mismas funciones que corre el
+    autopilot. El import de workflow es diferido porque workflow importa este módulo.
+
+    Retorna el mismo dict que `generar_seo()`, con "error" adentro si algo falló.
+    """
+    formato = _formato_por_resolucion(ruta_video)
+    frames = extraer_frames_thumbnail(ruta_video, cantidad=4)
+
+    titulos = ", ".join(c.get("titulo", "")[:40] for c in (clips or []) if c.get("titulo"))
+    descripcion = (
+        f"Compilación de videos virales de TikTok: {titulos}" if titulos
+        else f"Compilación de videos virales de fútbol: {Path(ruta_video).name}"
+    )
+
+    seo = generar_seo(
+        descripcion=descripcion,
+        tipo="YouTube Short viral" if formato == "reel" else "Compilación viral de fútbol",
+        canal_handle="",
+        idioma="Español",
+        frames_b64=frames if frames else None,
+        formato=formato,
+        clips=clips,
+        candidatos_titulo=True,
+        jugador=jugador,
+    )
+    if "error" in seo:
+        return seo
+
+    # Misma elección de título que el autopilot: gana el candidato que menos se
+    # parece a los últimos 100 títulos del canal. Si no hay candidatos no toca nada.
+    try:
+        from modules.workflow import _elegir_titulo_autopilot
+        _elegir_titulo_autopilot(seo)
+    except Exception:
+        pass
+
+    # Capítulos solo para videos largos — en un Short de <60s no tienen sentido.
+    # Mismo criterio que compilar_y_generar_seo().
+    if formato != "reel" and clips:
+        capitulos = generar_capitulos(clips)
+        if capitulos and seo.get("descripcion"):
+            seo["descripcion"] += f"\n\n📌 CAPÍTULOS\n{capitulos}"
+
+    return seo
 
 
 def mostrar_seo_gen():

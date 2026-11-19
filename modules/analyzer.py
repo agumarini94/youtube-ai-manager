@@ -11,6 +11,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import plotly.express as px
 import pandas as pd
+from modules.claude_util import texto_respuesta
 
 
 def obtener_cliente_youtube():
@@ -185,7 +186,7 @@ Sé específico, práctico y directo. Usa bullet points donde sea útil."""
             max_tokens=1500,
             messages=[{"role": "user", "content": prompt}]
         )
-        return mensaje.content[0].text
+        return texto_respuesta(mensaje)
     except Exception as e:
         return f"❌ Error al consultar Claude API: {e}"
 

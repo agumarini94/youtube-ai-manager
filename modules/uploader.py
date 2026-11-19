@@ -447,13 +447,93 @@ Dentro de esa cuenta de marca está el canal **viralesDelFutbol**, que es el des
     st.markdown("---")
     st.subheader("4. Metadatos del video")
 
-    # Cargar datos del generador de contenido si existen
+    # ── SEO automático, con el mismo criterio que el autopilot ────────────────
+    # Hasta ahora estos tres campos solo se llenaban si pasabas a mano por el
+    # Generador de SEO y apretabas "Usar en Subida a YouTube". Viniendo del
+    # Compilador llegabas acá con todo vacío — y sin encuesta, así que tampoco se
+    # posteaba el comentario.
+    ruta_para_seo = st.session_state.get("video_para_subir", "")
+    if not (ruta_para_seo and Path(ruta_para_seo).exists()):
+        ruta_para_seo = ""
+
+    ya_hay_seo = bool(
+        st.session_state.get("ultimo_titulo") or st.session_state.get("ultima_descripcion")
+    )
+
+    col_seo_txt, col_seo_btn = st.columns([3, 1])
+    with col_seo_txt:
+        if ya_hay_seo:
+            st.caption("✅ Título, descripción y tags cargados. Editalos abajo o regeneralos.")
+        else:
+            st.caption(
+                "Todavía no hay SEO para este video. El botón usa el mismo criterio que el "
+                "autopilot: mira 4 frames del video, pide 3 candidatos de título — sin "
+                "muertes, lesiones ni noticias sin confirmar — y se queda con el que menos "
+                "se parece a lo que ya subiste. Tarda ~15 segundos."
+            )
+    with col_seo_btn:
+        generar_seo_btn = st.button(
+            "🔄 Regenerar SEO" if ya_hay_seo else "✨ Generar SEO",
+            use_container_width=True,
+            type="secondary" if ya_hay_seo else "primary",
+            disabled=not (ruta_para_seo or archivo_video),
+            key="btn_seo_auto",
+        )
+
+    if not (ruta_para_seo or archivo_video):
+        st.caption(
+            "⚠️ Elegí primero el video (arriba) o llegá desde el **🎞️ Compilador** — "
+            "el SEO automático necesita ver el video para analizarlo."
+        )
+
+    if generar_seo_btn and not ruta_para_seo and archivo_video:
+        # Video subido a mano: Claude necesita el archivo en disco para sacarle
+        # los frames. Se escribe una sola vez; la subida después lo reusa.
+        d_seo = Path(tempfile.gettempdir()) / "uploader_seo"
+        d_seo.mkdir(exist_ok=True)
+        ruta_para_seo = str(d_seo / archivo_video.name)
+        with open(ruta_para_seo, "wb") as f:
+            f.write(archivo_video.getvalue())
+
+    if generar_seo_btn:
+        clips_feed = st.session_state.get("compilador_clips", [])
+        orden_clips = st.session_state.get("comp_orden", list(range(len(clips_feed))))
+        clips_seo = [clips_feed[i] for i in orden_clips if i < len(clips_feed)] or None
+
+        with st.spinner("Claude está viendo el video y generando título, descripción y tags..."):
+            from modules.seo_gen import generar_seo_automatico
+            seo_auto = generar_seo_automatico(
+                ruta_para_seo,
+                clips=clips_seo,
+                jugador=st.session_state.get("seo_jugador", ""),
+            )
+
+        if "error" in seo_auto:
+            st.error(seo_auto["error"])
+            cruda = seo_auto.get("respuesta_cruda", "").strip()
+            if cruda:
+                with st.expander("🔍 Qué contestó Claude (primeros 200 caracteres)"):
+                    st.code(cruda, language=None)
+            st.caption("Podés escribir el título y la descripción a mano acá abajo y subir igual.")
+        else:
+            st.session_state["ultimo_titulo"] = seo_auto.get("titulo", "")
+            st.session_state["ultima_descripcion"] = seo_auto.get("descripcion", "")
+            st.session_state["ultimos_tags"] = ", ".join(seo_auto.get("tags", []))
+
+            encuesta_auto = seo_auto.get("encuesta")
+            if (isinstance(encuesta_auto, dict)
+                    and encuesta_auto.get("pregunta") and encuesta_auto.get("opciones")):
+                st.session_state["encuesta_pendiente"] = {
+                    "pregunta": encuesta_auto["pregunta"],
+                    "opciones": encuesta_auto["opciones"],
+                }
+            else:
+                st.session_state.pop("encuesta_pendiente", None)
+            st.rerun()
+
     titulo_previo = st.session_state.get("ultimo_titulo", "")
     descripcion_previa = st.session_state.get("ultima_descripcion", "")
     tags_previos = st.session_state.get("ultimos_tags", "")
-
-    if titulo_previo or descripcion_previa:
-        st.info("💡 Título, descripción y tags cargados automáticamente desde el Generador de Contenido.")
 
     titulo = st.text_input(
         "Título del video *",
@@ -662,17 +742,25 @@ Dentro de esa cuenta de marca está el canal **viralesDelFutbol**, que es el des
                 except Exception:
                     pass
 
+                # Comentario con la encuesta, igual que el autopilot
+                # (workflow.ejecutar_autopilot_pipeline): misma función y mismo parseo
+                # del video_id. Nada de lo que pase acá puede cortar la subida: el
+                # video ya está arriba y eso es lo que importa.
                 encuesta_pendiente = st.session_state.get("encuesta_pendiente") or {}
                 if encuesta_pendiente.get("pregunta") and encuesta_pendiente.get("opciones"):
-                    video_id = url_video.rsplit("=", 1)[-1]
-                    with st.spinner("🗳️ Posteando encuesta como comentario..."):
-                        from modules.workflow import postear_comentario_encuesta
-                        ok = postear_comentario_encuesta(video_id, encuesta_pendiente)
+                    ok = False
+                    try:
+                        video_id = url_video.split("v=")[-1].split("&")[0]
+                        with st.spinner("🗳️ Posteando encuesta como comentario..."):
+                            from modules.workflow import postear_comentario_encuesta
+                            ok = postear_comentario_encuesta(video_id, encuesta_pendiente)
+                    except Exception as e_com:
+                        st.warning(f"⚠️ No se pudo postear la encuesta: {e_com}")
                     if ok:
                         st.success("✅ Encuesta posteada como comentario. Fijala desde YouTube Studio para máximo engagement.")
                         st.session_state.pop("encuesta_pendiente", None)
                     else:
-                        st.warning("⚠️ No se pudo postear la encuesta automáticamente. Podés hacerlo a mano desde YouTube Studio.")
+                        st.warning("⚠️ No se pudo postear la encuesta automáticamente. El video quedó subido igual — podés comentarla a mano desde YouTube Studio.")
 
                 # Mostrar resumen
                 st.markdown("**Resumen de la publicación:**")

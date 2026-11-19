@@ -12,6 +12,7 @@ from pathlib import Path
 
 import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
+from modules.claude_util import texto_respuesta
 
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
 FFPROBE = "/opt/homebrew/bin/ffprobe"
@@ -253,7 +254,7 @@ def generar_texto_thumbnail(seo: dict) -> dict:
                 f'"subtitulo_thumb": "2-3 palabras opcionales o vacío"}}'
             )}],
         )
-        data = json.loads(resp.content[0].text.strip())
+        data = json.loads(texto_respuesta(resp).strip())
         return {
             "titulo_thumb": (data.get("titulo_thumb") or fallback_titulo)[:50],
             "subtitulo_thumb": (data.get("subtitulo_thumb") or "")[:40],

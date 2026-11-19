@@ -17,6 +17,7 @@ import requests
 from PIL import Image, ImageDraw, ImageFont
 
 from modules.marca_agua import aplicar_marca_de_agua
+from modules.claude_util import texto_respuesta
 
 ESPN_URL = "http://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
 FFMPEG   = "/opt/homebrew/bin/ffmpeg"
@@ -508,7 +509,7 @@ def generar_pronosticos_claude(partidos: list[dict]) -> dict:
         messages=[{"role": "user", "content": prompt}],
     )
 
-    raw = resp.content[0].text.strip()
+    raw = texto_respuesta(resp).strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):

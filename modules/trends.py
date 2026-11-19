@@ -9,6 +9,7 @@ import os
 import anthropic
 import yt_dlp
 from datetime import datetime, timedelta
+from modules.claude_util import texto_respuesta
 
 
 # Nichos para YouTube
@@ -269,7 +270,7 @@ Sé específico y práctico. Considerá que el Mundial 2026 empieza el 11 de jun
             max_tokens=1500,
             messages=[{"role": "user", "content": prompt}]
         )
-        return mensaje.content[0].text
+        return texto_respuesta(mensaje)
     except Exception as e:
         return f"❌ Error al consultar Claude API: {e}"
 

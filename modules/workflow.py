@@ -19,6 +19,7 @@ from modules.compilador import concatenar_clips, agregar_overlay_suscripcion
 from modules.marca_agua import aplicar_marca_de_agua
 from modules.seo_gen import generar_seo, extraer_frames_thumbnail, generar_capitulos
 from modules.copyright_check import revisar_y_limpiar_clips
+from modules.claude_util import texto_respuesta
 
 _TZ_ARG = pytz.timezone("America/Argentina/Buenos_Aires")
 _DIAS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
@@ -166,7 +167,7 @@ def _encontrar_momento_hook(ruta_video: str) -> int | None:
             max_tokens=10,
             messages=[{"role": "user", "content": content}],
         )
-        frame_num = int(resp.content[0].text.strip())
+        frame_num = int(texto_respuesta(resp).strip())
         if 1 <= frame_num <= len(frames_info):
             return frames_info[frame_num - 1][0]
     except Exception:
@@ -490,7 +491,7 @@ def generar_recomendacion_horario(categoria: str | None = None) -> dict:
                 max_tokens=250,
                 messages=[{"role": "user", "content": prompt}],
             )
-            data = json.loads(resp.content[0].text.strip())
+            data = json.loads(texto_respuesta(resp).strip())
             dt_local = _TZ_ARG.localize(
                 datetime.strptime(f"{data['fecha_local']} {data['hora_local']}", "%Y-%m-%d %H:%M")
             )
@@ -840,7 +841,7 @@ def _elegir_tramo_clip(ruta: str, duracion_tramo: float) -> tuple[float, float] 
             max_tokens=10,
             messages=[{"role": "user", "content": content}],
         )
-        num = int(resp.content[0].text.strip())
+        num = int(texto_respuesta(resp).strip())
     except Exception as e:
         _log_autopilot(f"Claude no pudo elegir el tramo de {Path(ruta).name}: {e}")
         return None
@@ -968,7 +969,7 @@ def _generar_texto_gancho(clips: list[dict]) -> str | None:
             max_tokens=40,
             messages=[{"role": "user", "content": prompt}],
         )
-        texto = resp.content[0].text.strip().strip("\"'").strip()
+        texto = texto_respuesta(resp).strip().strip("\"'").strip()
     except Exception as e:
         _log_autopilot(f"Claude no pudo generar el texto de gancho: {e}")
         return None

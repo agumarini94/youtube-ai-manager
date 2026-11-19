@@ -24,6 +24,7 @@ import anthropic
 import requests
 
 from modules.marca_agua import aplicar_marca_de_agua
+from modules.claude_util import texto_respuesta
 
 # Usamos ffmpeg-full (con libass + libfreetype) para soportar subtítulos quemados,
 # drawtext y zoompan. El ffmpeg del PATH (Homebrew minimal) no incluye libass.
@@ -257,7 +258,7 @@ Respondé SOLO con JSON válido (sin markdown):
         messages=[{"role": "user", "content": prompt}],
     )
 
-    raw = resp.content[0].text.strip()
+    raw = texto_respuesta(resp).strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):

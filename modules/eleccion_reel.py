@@ -19,6 +19,7 @@ from modules.imagen_reel import (
     _IMG_W,
     _IMG_H,
 )
+from modules.claude_util import texto_respuesta
 
 _HISTORIAL_FILE = Path(__file__).parent.parent / "eleccion_historial.json"
 
@@ -171,7 +172,7 @@ Respondé SOLO con JSON válido:
         max_tokens=700,
         messages=[{"role": "user", "content": prompt}],
     )
-    raw = resp.content[0].text.strip()
+    raw = texto_respuesta(resp).strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):

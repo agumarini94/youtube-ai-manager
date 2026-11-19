@@ -16,6 +16,7 @@ import base64
 import anthropic
 import requests
 from pathlib import Path
+from modules.claude_util import texto_respuesta
 
 
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
@@ -204,7 +205,7 @@ Escribí entre {palabras_objetivo - 8} y {palabras_objetivo + 8} palabras. Texto
                 max_tokens=400,
                 messages=[{"role": "user", "content": contenido}]
             )
-            texto = respuesta.content[0].text.strip()
+            texto = texto_respuesta(respuesta).strip()
             narraciones.append(texto)
         except Exception as e:
             narraciones.append(f"Clip {i+1}.")

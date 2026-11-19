@@ -12,6 +12,8 @@ import hashlib
 from pathlib import Path
 
 from modules.marca_agua import aplicar_marca_de_agua
+from modules.claude_util import texto_respuesta
+from modules.copyright_check import revisar_y_limpiar_clips, _acrcloud_configurado
 
 FFMPEG  = "/opt/homebrew/bin/ffmpeg"
 FFPROBE = "/opt/homebrew/bin/ffprobe"
@@ -199,7 +201,7 @@ No incluyas explicaciones ni texto adicional."""
             max_tokens=200,
             messages=[{"role": "user", "content": prompt}]
         )
-        texto = respuesta.content[0].text.strip()
+        texto = texto_respuesta(respuesta).strip()
         if texto.startswith("```"):
             texto = texto.split("```")[1]
             if texto.startswith("json"):
@@ -216,6 +218,42 @@ No incluyas explicaciones ni texto adicional."""
         return None
     except Exception:
         return None
+
+
+def limpiar_copyright_en_pantalla(clips_ordenados: list[dict]) -> list[dict]:
+    """
+    Corre el análisis de copyright de ACRCloud sobre los clips, igual que el bot en
+    `workflow.py`, mostrando el progreso clip por clip en la pantalla.
+
+    Es la misma `copyright_check.revisar_y_limpiar_clips` que usan el autopilot y
+    /trabajar: detecta música comercial registrada en cada clip y silencia SOLO ese
+    tramo. Lo único que cambia acá es el `notify`, que en vez de mandar a Telegram
+    escribe en un placeholder de Streamlit.
+
+    Devuelve la lista de clips con "ruta" apuntando a la versión limpia donde hizo
+    falta. Si ACRCloud no está configurado devuelve la lista intacta.
+    """
+    if not _acrcloud_configurado():
+        st.caption(
+            "⏭️ Análisis de copyright salteado — faltan ACRCLOUD_HOST, "
+            "ACRCLOUD_ACCESS_KEY y ACRCLOUD_ACCESS_SECRET en el `.env`."
+        )
+        return clips_ordenados
+
+    carpeta_cr = Path(tempfile.gettempdir()) / "compilador_copyright"
+    carpeta_cr.mkdir(exist_ok=True)
+
+    panel = st.empty()
+
+    def notify(txt: str):
+        # revisar_y_limpiar_clips manda el texto acumulado con <b> y saltos de línea.
+        # En markdown un \n suelto no corta renglón: hace falta el doble espacio.
+        panel.markdown(txt.replace("\n", "  \n"), unsafe_allow_html=True)
+
+    with st.spinner("Analizando el audio de cada clip contra ACRCloud..."):
+        limpios = revisar_y_limpiar_clips(clips_ordenados, str(carpeta_cr), notify=notify)
+
+    return limpios
 
 
 def fmt_duracion(seg: float) -> str:
@@ -381,7 +419,10 @@ def mostrar_compilador():
     _rutas = [clips[i]["ruta"] for i in orden]
     _dual_check = (res_label == _AMBOS)
     if len(_rutas) == 1 and not _dual_check and Path(_rutas[0]).exists():
-        ruta_unica = _rutas[0]
+        # Mismo chequeo de copyright que el bot. Acá no hay concatenación, pero este
+        # es igual el video que termina subiéndose, así que no puede saltárselo.
+        _limpios = limpiar_copyright_en_pantalla([clips[i] for i in orden])
+        ruta_unica = _limpios[0]["ruta"]
         carpeta_single = Path(tempfile.gettempdir()) / "compilador_out"
         carpeta_single.mkdir(exist_ok=True)
         ts_single = int(time.time())
@@ -452,6 +493,15 @@ def mostrar_compilador():
             st.session_state.modulo_activo = "Feed TikTok"
             st.rerun()
         return
+
+    # ── Copyright: analizar cada clip ANTES de unirlos ─────────────────────────
+    # Mismo punto del flujo que workflow.py:1095 (autopilot) y workflow.py:282
+    # (/trabajar): ACRCloud silencia el tramo con música registrada en el clip
+    # suelto, que es mucho más barato que descubrirlo con el reel ya armado.
+    st.markdown("---")
+    st.subheader("🔍 Revisión de copyright")
+    clips_limpios = limpiar_copyright_en_pantalla([clips[i] for i in orden])
+    rutas_ordenadas = [c["ruta"] for c in clips_limpios]
 
     dual = (res_label == _AMBOS)
     if dual:

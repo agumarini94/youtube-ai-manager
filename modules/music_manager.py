@@ -7,6 +7,7 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
+from modules.claude_util import texto_respuesta
 
 MUSIC_DIR = Path(__file__).parent.parent / "Songs"
 FFMPEG   = "/opt/homebrew/bin/ffmpeg"
@@ -188,7 +189,7 @@ def sugerir_musica_claude(contexto: str) -> dict | None:
             messages=[{"role": "user", "content": prompt}],
         )
         import json as _json
-        raw = resp.content[0].text.strip()
+        raw = texto_respuesta(resp).strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):

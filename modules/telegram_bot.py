@@ -17,6 +17,7 @@ import os
 import tempfile
 from datetime import datetime, timedelta, timezone as _tz
 from pathlib import Path
+from modules.claude_util import texto_respuesta
 
 _logger   = logging.getLogger(__name__)
 _TZ_ARG   = _tz(timedelta(hours=-3))
@@ -760,7 +761,7 @@ def _parsear_hora_custom(texto_usuario: str) -> str | None:
                 f"Si no podés interpretar, respondé: null"
             )}],
         )
-        raw = resp.content[0].text.strip()
+        raw = texto_respuesta(resp).strip()
         if raw.lower() == "null":
             return None
         data = _json.loads(raw)
@@ -1722,7 +1723,7 @@ def _ordenar_clips_con_claude(clips: list[dict]) -> list[int] | None:
             max_tokens=100,
             messages=[{"role": "user", "content": prompt}],
         )
-        raw = resp.content[0].text.strip()
+        raw = texto_respuesta(resp).strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):

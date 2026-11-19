@@ -35,6 +35,7 @@ from modules.imagen_reel import (
     _IMG_H,
     FFMPEG,
 )
+from modules.claude_util import texto_respuesta
 
 _XFADE_DUR = 0.8  # debe coincidir con imagen_reel
 
@@ -159,7 +160,7 @@ Respondé SOLO con JSON válido (sin markdown):
         messages=[{"role": "user", "content": prompt}],
     )
 
-    raw = resp.content[0].text.strip()
+    raw = texto_respuesta(resp).strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):

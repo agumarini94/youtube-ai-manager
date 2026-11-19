@@ -17,6 +17,7 @@ import requests
 from PIL import Image, ImageDraw, ImageFont
 
 from modules.marca_agua import aplicar_marca_de_agua
+from modules.claude_util import texto_respuesta
 
 FFMPEG  = "/opt/homebrew/bin/ffmpeg"
 FFPROBE = "/opt/homebrew/bin/ffprobe"
@@ -445,7 +446,7 @@ def generar_pregunta_claude(tema: str = "") -> dict:
         messages=[{"role": "user", "content": prompt}],
     )
 
-    raw = resp.content[0].text.strip()
+    raw = texto_respuesta(resp).strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
