@@ -12,6 +12,7 @@ google-auth-httplib2>=0.2.0
 
 # Descarga y análisis de videos
 yt-dlp>=2024.3.10
+scenedetect>=0.7          # detección de cortes de escena (modules/clip_splitter.py)
 
 # ElevenLabs - texto a voz
 elevenlabs>=1.1.0
@@ -29,9 +30,18 @@ plotly>=5.20.0
 # Manejo de datos
 pandas>=2.2.0
 
-# Subtítulos automáticos con IA (módulo Editor de Video)
+# Generación de imágenes para reels (modules/imagen_reel.py)
+pillow>=10.0.0
+
+# Subtítulos automáticos con IA (modules/subtitles.py)
 # Nota: FFmpeg debe estar instalado en el sistema: brew install ffmpeg
-openai-whisper>=20231117
+# faster-whisper arrastra ctranslate2, av y onnxruntime; no hace falta pinearlos.
+# NO usar openai-whisper: arrastra torch (~2.5GB) y el código no lo necesita.
+faster-whisper>=1.2.1
+
+# API REST para el frontend React (api/main.py)
+fastapi>=0.110.0
+uvicorn>=0.27.0
 
 # Bot de Telegram + scheduler automático
 python-telegram-bot>=20.0
